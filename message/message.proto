@@ -53,7 +53,7 @@ message CommitMessage {
 }
 
 message ReplyMessage {
-  int32 Ballot = 1;
+  BallotNumber Ballot = 1;
   google.protobuf.Timestamp ClientRequestTimestamp = 2;
   string Status = 3;
 }

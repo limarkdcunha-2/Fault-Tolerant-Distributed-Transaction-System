@@ -393,7 +393,7 @@ func (x *CommitMessage) GetRequest() *ClientRequest {
 
 type ReplyMessage struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
-	Ballot                 int32                  `protobuf:"varint,1,opt,name=Ballot,proto3" json:"Ballot,omitempty"`
+	Ballot                 *BallotNumber          `protobuf:"bytes,1,opt,name=Ballot,proto3" json:"Ballot,omitempty"`
 	ClientRequestTimestamp *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=ClientRequestTimestamp,proto3" json:"ClientRequestTimestamp,omitempty"`
 	Status                 string                 `protobuf:"bytes,3,opt,name=Status,proto3" json:"Status,omitempty"`
 	unknownFields          protoimpl.UnknownFields
@@ -430,11 +430,11 @@ func (*ReplyMessage) Descriptor() ([]byte, []int) {
 	return file_message_message_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *ReplyMessage) GetBallot() int32 {
+func (x *ReplyMessage) GetBallot() *BallotNumber {
 	if x != nil {
 		return x.Ballot
 	}
-	return 0
+	return nil
 }
 
 func (x *ReplyMessage) GetClientRequestTimestamp() *timestamppb.Timestamp {
@@ -479,9 +479,9 @@ const file_message_message_proto_rawDesc = "" +
 	"\rCommitMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12 \n" +
 	"\vSequenceNum\x18\x02 \x01(\x05R\vSequenceNum\x120\n" +
-	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\"\x92\x01\n" +
-	"\fReplyMessage\x12\x16\n" +
-	"\x06Ballot\x18\x01 \x01(\x05R\x06Ballot\x12R\n" +
+	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\"\xa9\x01\n" +
+	"\fReplyMessage\x12-\n" +
+	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12R\n" +
 	"\x16ClientRequestTimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x16ClientRequestTimestamp\x12\x16\n" +
 	"\x06Status\x18\x03 \x01(\tR\x06Status2\x9c\x02\n" +
 	"\x0eMessageService\x12D\n" +
@@ -525,22 +525,23 @@ var file_message_message_proto_depIdxs = []int32{
 	1,  // 5: message.AcceptedMessage.Request:type_name -> message.ClientRequest
 	2,  // 6: message.CommitMessage.Ballot:type_name -> message.BallotNumber
 	1,  // 7: message.CommitMessage.Request:type_name -> message.ClientRequest
-	7,  // 8: message.ReplyMessage.ClientRequestTimestamp:type_name -> google.protobuf.Timestamp
-	1,  // 9: message.MessageService.SendRequestMessage:input_type -> message.ClientRequest
-	3,  // 10: message.MessageService.HandleAccept:input_type -> message.AcceptMessage
-	4,  // 11: message.MessageService.HandleAccepted:input_type -> message.AcceptedMessage
-	4,  // 12: message.MessageService.HandleCommit:input_type -> message.AcceptedMessage
-	6,  // 13: message.ClientService.HandleReply:input_type -> message.ReplyMessage
-	8,  // 14: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
-	8,  // 15: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
-	8,  // 16: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
-	8,  // 17: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
-	8,  // 18: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
-	14, // [14:19] is the sub-list for method output_type
-	9,  // [9:14] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	2,  // 8: message.ReplyMessage.Ballot:type_name -> message.BallotNumber
+	7,  // 9: message.ReplyMessage.ClientRequestTimestamp:type_name -> google.protobuf.Timestamp
+	1,  // 10: message.MessageService.SendRequestMessage:input_type -> message.ClientRequest
+	3,  // 11: message.MessageService.HandleAccept:input_type -> message.AcceptMessage
+	4,  // 12: message.MessageService.HandleAccepted:input_type -> message.AcceptedMessage
+	4,  // 13: message.MessageService.HandleCommit:input_type -> message.AcceptedMessage
+	6,  // 14: message.ClientService.HandleReply:input_type -> message.ReplyMessage
+	8,  // 15: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
+	8,  // 16: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
+	8,  // 17: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
+	8,  // 18: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
+	8,  // 19: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
+	15, // [15:20] is the sub-list for method output_type
+	10, // [10:15] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_message_message_proto_init() }

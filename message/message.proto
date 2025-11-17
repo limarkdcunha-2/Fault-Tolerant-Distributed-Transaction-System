@@ -1,0 +1,71 @@
+/*
+ * Copyright (c) 2025 [Limark Dcunha]
+ * All rights reserved.
+ */
+
+ 
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// Use this command
+// export PATH="$PATH:$(go env GOPATH)/bin"
+// protoc --go_out=. --go_opt=paths=source_relative        --go-grpc_out=. --go-grpc_opt=paths=source_relative     message/message.proto
+
+package message;
+option go_package = "transaction-processor/message";
+
+message Transaction {
+  string Sender = 1;
+  string Receiver = 2;
+  int32 Amount = 3; 
+}
+
+message ClientRequest {
+  google.protobuf.Timestamp Timestamp = 1;
+  Transaction Transaction = 2;
+  int32 ClientId = 3;
+}
+
+message BallotNumber {
+    int32 NodeId = 1;
+    int32 RounderNumber = 2;
+}
+
+message AcceptMessage {
+  BallotNumber Ballot = 1;
+  int32 SequenceNum = 2;
+  ClientRequest Request = 3;
+}
+
+message AcceptedMessage {
+  BallotNumber Ballot = 1;
+  int32 SequenceNum = 2;
+  ClientRequest Request = 3;
+  int32 NodeId = 4;
+}
+
+message CommitMessage {
+  BallotNumber Ballot = 1;
+  int32 SequenceNum = 2;
+  ClientRequest Request = 3;
+}
+
+message ReplyMessage {
+  int32 Ballot = 1;
+  google.protobuf.Timestamp ClientRequestTimestamp = 2;
+  string Status = 3;
+}
+
+
+service MessageService {
+    rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
+    rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
+    rpc HandleAccepted(AcceptedMessage) returns (google.protobuf.Empty);
+    rpc HandleCommit(AcceptedMessage) returns (google.protobuf.Empty);
+}
+
+service ClientService {
+  rpc HandleReply(ReplyMessage) returns (google.protobuf.Empty);
+}

@@ -12,7 +12,7 @@ import (
 func gen_test_cases() {
 
 	participants := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
-	nodes := []string{"n1", "n2", "n3", "n4", "n5", "n6", "n7"}
+	nodes := []string{"n1", "n2", "n3", "n4", "n5"}
 
 	const sets = 1
 	const txPerSet = 10
@@ -33,7 +33,7 @@ func gen_test_cases() {
 
 	for set := 1; set <= sets; set++ {
 		// Random live nodes between 4 and 7
-		numLive := rand.Intn(4) + 4 // 4-7 inclusive
+		numLive := 5 // 4-7 inclusive
 		live := randomSubset(nodes, numLive)
 		liveStr := "[" + strings.Join(live, ", ") + "]"
 

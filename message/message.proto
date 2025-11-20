@@ -30,7 +30,7 @@ message ClientRequest {
 
 message BallotNumber {
     int32 NodeId = 1;
-    int32 RounderNumber = 2;
+    int32 RoundNumber = 2;
 }
 
 message AcceptMessage {
@@ -60,10 +60,10 @@ message ReplyMessage {
 
 
 service MessageService {
-    rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
-    rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
-    rpc HandleAccepted(AcceptedMessage) returns (google.protobuf.Empty);
-    rpc HandleCommit(AcceptedMessage) returns (google.protobuf.Empty);
+  rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
+  rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
+  rpc HandleAccepted(AcceptedMessage) returns (google.protobuf.Empty);
+  rpc HandleCommit(CommitMessage) returns (google.protobuf.Empty);
 }
 
 service ClientService {

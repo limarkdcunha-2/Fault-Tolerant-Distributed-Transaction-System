@@ -41,7 +41,7 @@ type MessageServiceClient interface {
 	SendRequestMessage(ctx context.Context, in *ClientRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleAccept(ctx context.Context, in *AcceptMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleAccepted(ctx context.Context, in *AcceptedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	HandleCommit(ctx context.Context, in *AcceptedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleCommit(ctx context.Context, in *CommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type messageServiceClient struct {
@@ -82,7 +82,7 @@ func (c *messageServiceClient) HandleAccepted(ctx context.Context, in *AcceptedM
 	return out, nil
 }
 
-func (c *messageServiceClient) HandleCommit(ctx context.Context, in *AcceptedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *messageServiceClient) HandleCommit(ctx context.Context, in *CommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, MessageService_HandleCommit_FullMethodName, in, out, cOpts...)
@@ -99,7 +99,7 @@ type MessageServiceServer interface {
 	SendRequestMessage(context.Context, *ClientRequest) (*emptypb.Empty, error)
 	HandleAccept(context.Context, *AcceptMessage) (*emptypb.Empty, error)
 	HandleAccepted(context.Context, *AcceptedMessage) (*emptypb.Empty, error)
-	HandleCommit(context.Context, *AcceptedMessage) (*emptypb.Empty, error)
+	HandleCommit(context.Context, *CommitMessage) (*emptypb.Empty, error)
 	mustEmbedUnimplementedMessageServiceServer()
 }
 
@@ -119,7 +119,7 @@ func (UnimplementedMessageServiceServer) HandleAccept(context.Context, *AcceptMe
 func (UnimplementedMessageServiceServer) HandleAccepted(context.Context, *AcceptedMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleAccepted not implemented")
 }
-func (UnimplementedMessageServiceServer) HandleCommit(context.Context, *AcceptedMessage) (*emptypb.Empty, error) {
+func (UnimplementedMessageServiceServer) HandleCommit(context.Context, *CommitMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleCommit not implemented")
 }
 func (UnimplementedMessageServiceServer) mustEmbedUnimplementedMessageServiceServer() {}
@@ -198,7 +198,7 @@ func _MessageService_HandleAccepted_Handler(srv interface{}, ctx context.Context
 }
 
 func _MessageService_HandleCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AcceptedMessage)
+	in := new(CommitMessage)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func _MessageService_HandleCommit_Handler(srv interface{}, ctx context.Context, 
 		FullMethod: MessageService_HandleCommit_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MessageServiceServer).HandleCommit(ctx, req.(*AcceptedMessage))
+		return srv.(MessageServiceServer).HandleCommit(ctx, req.(*CommitMessage))
 	}
 	return interceptor(ctx, in, info, handler)
 }

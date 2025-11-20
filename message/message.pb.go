@@ -154,7 +154,7 @@ func (x *ClientRequest) GetClientId() int32 {
 type BallotNumber struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeId        int32                  `protobuf:"varint,1,opt,name=NodeId,proto3" json:"NodeId,omitempty"`
-	RounderNumber int32                  `protobuf:"varint,2,opt,name=RounderNumber,proto3" json:"RounderNumber,omitempty"`
+	RoundNumber   int32                  `protobuf:"varint,2,opt,name=RoundNumber,proto3" json:"RoundNumber,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -196,9 +196,9 @@ func (x *BallotNumber) GetNodeId() int32 {
 	return 0
 }
 
-func (x *BallotNumber) GetRounderNumber() int32 {
+func (x *BallotNumber) GetRoundNumber() int32 {
 	if x != nil {
-		return x.RounderNumber
+		return x.RoundNumber
 	}
 	return 0
 }
@@ -463,10 +463,10 @@ const file_message_message_proto_rawDesc = "" +
 	"\rClientRequest\x128\n" +
 	"\tTimestamp\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\tTimestamp\x126\n" +
 	"\vTransaction\x18\x02 \x01(\v2\x14.message.TransactionR\vTransaction\x12\x1a\n" +
-	"\bClientId\x18\x03 \x01(\x05R\bClientId\"L\n" +
+	"\bClientId\x18\x03 \x01(\x05R\bClientId\"H\n" +
 	"\fBallotNumber\x12\x16\n" +
-	"\x06NodeId\x18\x01 \x01(\x05R\x06NodeId\x12$\n" +
-	"\rRounderNumber\x18\x02 \x01(\x05R\rRounderNumber\"\x92\x01\n" +
+	"\x06NodeId\x18\x01 \x01(\x05R\x06NodeId\x12 \n" +
+	"\vRoundNumber\x18\x02 \x01(\x05R\vRoundNumber\"\x92\x01\n" +
 	"\rAcceptMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12 \n" +
 	"\vSequenceNum\x18\x02 \x01(\x05R\vSequenceNum\x120\n" +
@@ -483,12 +483,12 @@ const file_message_message_proto_rawDesc = "" +
 	"\fReplyMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12R\n" +
 	"\x16ClientRequestTimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x16ClientRequestTimestamp\x12\x16\n" +
-	"\x06Status\x18\x03 \x01(\tR\x06Status2\x9c\x02\n" +
+	"\x06Status\x18\x03 \x01(\tR\x06Status2\x9a\x02\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +
-	"\x0eHandleAccepted\x12\x18.message.AcceptedMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
-	"\fHandleCommit\x12\x18.message.AcceptedMessage\x1a\x16.google.protobuf.Empty2M\n" +
+	"\x0eHandleAccepted\x12\x18.message.AcceptedMessage\x1a\x16.google.protobuf.Empty\x12>\n" +
+	"\fHandleCommit\x12\x16.message.CommitMessage\x1a\x16.google.protobuf.Empty2M\n" +
 	"\rClientService\x12<\n" +
 	"\vHandleReply\x12\x15.message.ReplyMessage\x1a\x16.google.protobuf.EmptyB\x1fZ\x1dtransaction-processor/messageb\x06proto3"
 
@@ -530,7 +530,7 @@ var file_message_message_proto_depIdxs = []int32{
 	1,  // 10: message.MessageService.SendRequestMessage:input_type -> message.ClientRequest
 	3,  // 11: message.MessageService.HandleAccept:input_type -> message.AcceptMessage
 	4,  // 12: message.MessageService.HandleAccepted:input_type -> message.AcceptedMessage
-	4,  // 13: message.MessageService.HandleCommit:input_type -> message.AcceptedMessage
+	5,  // 13: message.MessageService.HandleCommit:input_type -> message.CommitMessage
 	6,  // 14: message.ClientService.HandleReply:input_type -> message.ReplyMessage
 	8,  // 15: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
 	8,  // 16: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty

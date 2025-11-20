@@ -358,3 +358,13 @@ func (client *Client) HandleReply(ctx context.Context, reply *pb.ReplyMessage) (
     
 	return &emptypb.Empty{}, nil
 }
+
+func (client *Client) closeAllConnections() {
+	client.muConn.Lock()
+	defer client.muConn.Unlock()
+	for _, conn := range client.serverConns {
+		if conn != nil {
+			conn.Close()
+		}
+	}
+}

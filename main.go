@@ -24,7 +24,7 @@ func main() {
 	
 	serverMode := flag.Bool("s", false, "Run in server mode (spawn nodes)")
 	runnerMode := flag.Bool("r", false, "Run in runner mode (full simulation)")
-	// keyGenMode := flag.Bool("k", false, "Run in to generate public and private keys")
+	testCasesGenMode := flag.Bool("t", false, "Run in to generate random test cases")
 	
 	flag.Parse()
 
@@ -37,11 +37,10 @@ func main() {
 		}
 	case *runnerMode:
 		log.Println("[Runner] Launching full simulation...")
-		// runner := NewRunner()
-		// runner.RunAllTestSets()
-
-	// case *keyGenMode:
-	// 	GenerateAndStoreKeys()
+		runner := NewRunner()
+		runner.RunAllTestSets()
+	case *testCasesGenMode:
+		gen_test_cases()
 	default:
 		log.Println("Usage:")
 		log.Println("  go run . -s node <id> <servicePort> <controlPort>  (Run a single node)")

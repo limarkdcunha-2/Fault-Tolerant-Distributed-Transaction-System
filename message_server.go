@@ -176,7 +176,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 
 		// Check if already acceped then send accepted message again
 		if existingEntry.Phase >= PhaseAccepted {
-			log.Printf("[Node %d] Seq=%d already in status %s, not overwriting to accepted",
+			log.Printf("[Node %d] Seq=%d already in status %v, not overwriting to accepted",
                 node.nodeId, msg.SequenceNum, existingEntry.Phase)
 
 			acceptedMessage := &pb.AcceptedMessage{

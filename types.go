@@ -17,3 +17,15 @@ type Transaction struct{
 	Receiver string 
 	Amount int32
 }
+
+type TestTransaction struct {
+	Sender  string 
+	Receiver string 
+	Amount  int  
+}
+
+type TestCase struct {
+    SetNumber      int
+    Transactions   []TestTransaction
+    LiveNodes      []int
+}

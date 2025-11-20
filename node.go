@@ -8,10 +8,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	pb "transaction-processor/message"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -89,6 +91,24 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		pendingRequests: make(map[string]int32),
 		clientConns:make(map[int32]*grpc.ClientConn),
 	}
+
+	// Building peer connections
+	for _, nodeConfig := range getNodeCluster() {
+        if nodeConfig.NodeId == nodeId {
+            continue
+        }
+
+        addr := ":" + strconv.Itoa(int(nodeConfig.PortNo))
+
+        conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+        if err != nil {
+            log.Printf("Warning: Could not connect to peer %d on startup: %v", nodeConfig.NodeId, err)
+        }
+
+        client := pb.NewMessageServiceClient(conn)
+
+        newNode.peers[nodeConfig.NodeId] = client
+    }
 
 	return newNode,nil
 }

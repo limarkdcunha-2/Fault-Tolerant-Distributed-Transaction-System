@@ -114,6 +114,9 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 func (node *Node) broadcastAcceptMessage(msg *pb.AcceptMessage){
 	allNodes := getAllNodeIDs()
 
+	log.Printf("[Node %d] Broadcasting ACCEPT seq=%d", 
+                node.nodeId, msg.SequenceNum)
+
 	for _, nodeId := range allNodes {
  		if nodeId == node.nodeId {
             continue
@@ -127,8 +130,7 @@ func (node *Node) broadcastAcceptMessage(msg *pb.AcceptMessage){
         }
 
 		go func(id int32, client pb.MessageServiceClient) {
-            log.Printf("[Node %d] Broadcasting ACCEPT seq=%d to Node %d", 
-                node.nodeId, msg.SequenceNum, id)
+            
             
             _, err := client.HandleAccept(context.Background(), msg)
             
@@ -231,8 +233,8 @@ func(node *Node) sendAcceptedMessage(msg *pb.AcceptedMessage){
 }
 
 func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*emptypb.Empty, error) {
-	log.Printf("[Node %d] [ACCEPTED] Received from Node %d | ballot round=%d | Seq=%d ",
-		node.nodeId,msg.NodeId, msg.Ballot.RoundNumber, msg.SequenceNum)
+	log.Printf("[Node %d] [ACCEPTED] Received from Node %d | Seq=%d  | ballot round=%d",
+		node.nodeId,msg.NodeId, msg.SequenceNum,msg.Ballot.RoundNumber)
 
 	node.muLog.Lock()
 
@@ -273,10 +275,12 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	entry.AcceptedMessages[msg.NodeId] = msg
 	entry.AcceptCount = int32(len(entry.AcceptedMessages))
+	log.Printf("[Node %d] Accepted Count: %d",node.nodeId,entry.AcceptCount)
 
 	threshold := node.f + 1
 
 	if entry.AcceptCount >= threshold{
+		log.Printf("[Node %d] Quorum reached for seq=%d, round=%d",node.nodeId,entry.SequenceNum,entry.Ballot.RoundNumber)
 		entry.Phase = PhaseCommitted
 
 		commitMsg := &pb.CommitMessage{
@@ -290,14 +294,18 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 		go node.broadcastCommitMessage(commitMsg)
 
 		// go executeInorder()
-		
+		return &emptypb.Empty{}, nil
 	}
 
+	entry.mu.Unlock()
 	return &emptypb.Empty{}, nil
 }
 
 func(node *Node) broadcastCommitMessage(msg *pb.CommitMessage){
 	allNodes := getAllNodeIDs()
+
+	log.Printf("[Node %d] Broadcasting COMMIT seq=%d", 
+                node.nodeId, msg.SequenceNum)
 
 	for _, nodeId := range allNodes {
  		if nodeId == node.nodeId {
@@ -312,8 +320,7 @@ func(node *Node) broadcastCommitMessage(msg *pb.CommitMessage){
         }
 
 		go func(id int32, client pb.MessageServiceClient) {
-            log.Printf("[Node %d] Broadcasting COMMIT seq=%d to Node %d", 
-                node.nodeId, msg.SequenceNum, id)
+            
             
             _, err := client.HandleCommit(context.Background(), msg)
             

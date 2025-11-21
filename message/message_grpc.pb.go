@@ -32,6 +32,7 @@ const (
 	MessageService_HandleAccept_FullMethodName       = "/message.MessageService/HandleAccept"
 	MessageService_HandleAccepted_FullMethodName     = "/message.MessageService/HandleAccepted"
 	MessageService_HandleCommit_FullMethodName       = "/message.MessageService/HandleCommit"
+	MessageService_PrintAcceptLog_FullMethodName     = "/message.MessageService/PrintAcceptLog"
 )
 
 // MessageServiceClient is the client API for MessageService service.
@@ -42,6 +43,7 @@ type MessageServiceClient interface {
 	HandleAccept(ctx context.Context, in *AcceptMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleAccepted(ctx context.Context, in *AcceptedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleCommit(ctx context.Context, in *CommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type messageServiceClient struct {
@@ -92,6 +94,16 @@ func (c *messageServiceClient) HandleCommit(ctx context.Context, in *CommitMessa
 	return out, nil
 }
 
+func (c *messageServiceClient) PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_PrintAcceptLog_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MessageServiceServer is the server API for MessageService service.
 // All implementations must embed UnimplementedMessageServiceServer
 // for forward compatibility.
@@ -100,6 +112,7 @@ type MessageServiceServer interface {
 	HandleAccept(context.Context, *AcceptMessage) (*emptypb.Empty, error)
 	HandleAccepted(context.Context, *AcceptedMessage) (*emptypb.Empty, error)
 	HandleCommit(context.Context, *CommitMessage) (*emptypb.Empty, error)
+	PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedMessageServiceServer()
 }
 
@@ -121,6 +134,9 @@ func (UnimplementedMessageServiceServer) HandleAccepted(context.Context, *Accept
 }
 func (UnimplementedMessageServiceServer) HandleCommit(context.Context, *CommitMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleCommit not implemented")
+}
+func (UnimplementedMessageServiceServer) PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PrintAcceptLog not implemented")
 }
 func (UnimplementedMessageServiceServer) mustEmbedUnimplementedMessageServiceServer() {}
 func (UnimplementedMessageServiceServer) testEmbeddedByValue()                        {}
@@ -215,6 +231,24 @@ func _MessageService_HandleCommit_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_PrintAcceptLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).PrintAcceptLog(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_PrintAcceptLog_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).PrintAcceptLog(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MessageService_ServiceDesc is the grpc.ServiceDesc for MessageService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -237,6 +271,10 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HandleCommit",
 			Handler:    _MessageService_HandleCommit_Handler,
+		},
+		{
+			MethodName: "PrintAcceptLog",
+			Handler:    _MessageService_PrintAcceptLog_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

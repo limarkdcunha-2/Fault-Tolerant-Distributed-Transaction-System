@@ -492,3 +492,10 @@ func(node *Node) sendReplyToClient(reply *pb.ReplyMessage){
 
 	grpcClient.HandleReply(context.Background(),reply)
 }
+
+
+func (node *Node) PrintAcceptLog(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
+	node.PrintAcceptLogUtil()
+	
+	return &emptypb.Empty{},nil
+}

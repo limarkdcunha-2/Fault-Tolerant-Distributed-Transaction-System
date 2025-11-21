@@ -65,6 +65,8 @@ service MessageService {
   rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
   rpc HandleAccepted(AcceptedMessage) returns (google.protobuf.Empty);
   rpc HandleCommit(CommitMessage) returns (google.protobuf.Empty);
+
+  rpc PrintAcceptLog(google.protobuf.Empty) returns (google.protobuf.Empty);
 }
 
 service ClientService {

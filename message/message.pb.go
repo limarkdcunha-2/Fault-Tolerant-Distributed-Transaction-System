@@ -492,12 +492,13 @@ const file_message_message_proto_rawDesc = "" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12R\n" +
 	"\x16ClientRequestTimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x16ClientRequestTimestamp\x12\x16\n" +
 	"\x06Status\x18\x03 \x01(\tR\x06Status\x12\x1a\n" +
-	"\bClientId\x18\x04 \x01(\x05R\bClientId2\x9a\x02\n" +
+	"\bClientId\x18\x04 \x01(\x05R\bClientId2\xdc\x02\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +
 	"\x0eHandleAccepted\x12\x18.message.AcceptedMessage\x1a\x16.google.protobuf.Empty\x12>\n" +
-	"\fHandleCommit\x12\x16.message.CommitMessage\x1a\x16.google.protobuf.Empty2M\n" +
+	"\fHandleCommit\x12\x16.message.CommitMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
+	"\x0ePrintAcceptLog\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty2M\n" +
 	"\rClientService\x12<\n" +
 	"\vHandleReply\x12\x15.message.ReplyMessage\x1a\x16.google.protobuf.EmptyB\x1fZ\x1dtransaction-processor/messageb\x06proto3"
 
@@ -540,14 +541,16 @@ var file_message_message_proto_depIdxs = []int32{
 	3,  // 11: message.MessageService.HandleAccept:input_type -> message.AcceptMessage
 	4,  // 12: message.MessageService.HandleAccepted:input_type -> message.AcceptedMessage
 	5,  // 13: message.MessageService.HandleCommit:input_type -> message.CommitMessage
-	6,  // 14: message.ClientService.HandleReply:input_type -> message.ReplyMessage
-	8,  // 15: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
-	8,  // 16: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
-	8,  // 17: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
-	8,  // 18: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
-	8,  // 19: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
-	15, // [15:20] is the sub-list for method output_type
-	10, // [10:15] is the sub-list for method input_type
+	8,  // 14: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
+	6,  // 15: message.ClientService.HandleReply:input_type -> message.ReplyMessage
+	8,  // 16: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
+	8,  // 17: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
+	8,  // 18: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
+	8,  // 19: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
+	8,  // 20: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
+	8,  // 21: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
+	16, // [16:22] is the sub-list for method output_type
+	10, // [10:16] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
 	10, // [10:10] is the sub-list for extension extendee
 	0,  // [0:10] is the sub-list for field type_name

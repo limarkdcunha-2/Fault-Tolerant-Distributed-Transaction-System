@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type Runner struct {
@@ -90,9 +92,14 @@ func (r *Runner) RunAllTestSets() {
         // r.ConfigureNodesForSet(tc)
 
         // Execute transactions
+        start := time.Now()
         r.ExecuteTestCase(tc,r.localClients)
+        end := time.Since(start)
 
+        log.Printf("[Runner] Total time elapsed %v",end)
+        
         // r.showInteractiveMenu()
+        r.PrintStatusAll()
     }
 
     log.Printf("All test sets complete")
@@ -138,7 +145,7 @@ func (r *Runner) ExecuteTestCase(tc TestCase, clients map[string]*Client) {
 				})
 
                 // Small delay between this client's transactions
-                time.Sleep(20 * time.Millisecond)
+                // time.Sleep(20 * time.Millisecond)
             }
 
             log.Printf("[Runner] Client %s completed all %d transactions for Set %d", 
@@ -150,4 +157,21 @@ func (r *Runner) ExecuteTestCase(tc TestCase, clients map[string]*Client) {
     wg.Wait()
 
     log.Printf("[Runner] Finished all transactions for Set %d.", tc.SetNumber)
+}
+
+
+func (r *Runner) PrintStatusAll() {
+    for _, nodeCfg := range getNodeCluster() {
+        client, exists := r.nodeClients[int32(nodeCfg.NodeId)]
+        if !exists {
+            log.Printf("[Runner] No connection to node %d", nodeCfg.NodeId)
+            continue
+        }
+
+        _, err := client.PrintAcceptLog(context.Background(),  &emptypb.Empty{})
+
+        if err != nil {
+            log.Printf("[Runner] Failed to print log for node %d: %v", nodeCfg.NodeId, err)
+        }
+    }
 }

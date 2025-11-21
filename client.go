@@ -90,7 +90,7 @@ func (client *Client) startGrpcServer() error {
 	}()
 
 	// small warm-up pause tolerable
-	time.Sleep(10 * time.Millisecond)
+	// time.Sleep(10 * time.Millisecond)
 	return nil
 }
 
@@ -145,9 +145,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 		grpcClient, _ := client.getConnForNode(leaderId)
 
 		if grpcClient != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-			_, err := grpcClient.SendRequestMessage(ctx, req)
-			cancel()
+			_, err := grpcClient.SendRequestMessage(context.Background(), req)
 			
 			if err != nil {
 				log.Printf("[Client %d] Failed to send to leader %d: %v", client.id, leaderId, err)
@@ -156,7 +154,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			}
 		}
 
-		result,ok := client.waitForReply(pending, 300*time.Millisecond)
+		result,ok := client.waitForReply(pending, 100*time.Millisecond)
 
 		if ok {
 			pending.mu.Lock()
@@ -168,7 +166,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 
 		client.broadcastToAllNodes(req)
 
-		result,ok = client.waitForReply(pending, 300*time.Millisecond)
+		result,ok = client.waitForReply(pending, 200*time.Millisecond)
 
 		if ok {
 			pending.mu.Lock()
@@ -206,11 +204,8 @@ func (client *Client) broadcastToAllNodes(req *pb.ClientRequest) {
 				log.Printf("[Client %d] No connection to node %d", client.id, nid)
 				return
 			}
-			
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
-			
-			_, err := grpcClient.SendRequestMessage(ctx, req)
+						
+			_, err := grpcClient.SendRequestMessage(context.Background(), req)
 			if err != nil {
 				log.Printf("[Client %d] Failed to broadcast to node %d: %v", client.id, nid, err)
 			} else {

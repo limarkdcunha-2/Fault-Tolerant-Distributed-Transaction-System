@@ -245,7 +245,7 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
 		pending.mu.Lock()
 		defer pending.mu.Unlock()
 		
-		log.Printf("[Client %d] Timeout waiting for reply from client")
+		log.Printf("[Client %d] Timeout waiting for reply from client",client.id)
 		return "", false
 	}
 }

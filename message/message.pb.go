@@ -396,6 +396,7 @@ type ReplyMessage struct {
 	Ballot                 *BallotNumber          `protobuf:"bytes,1,opt,name=Ballot,proto3" json:"Ballot,omitempty"`
 	ClientRequestTimestamp *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=ClientRequestTimestamp,proto3" json:"ClientRequestTimestamp,omitempty"`
 	Status                 string                 `protobuf:"bytes,3,opt,name=Status,proto3" json:"Status,omitempty"`
+	ClientId               int32                  `protobuf:"varint,4,opt,name=ClientId,proto3" json:"ClientId,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -451,6 +452,13 @@ func (x *ReplyMessage) GetStatus() string {
 	return ""
 }
 
+func (x *ReplyMessage) GetClientId() int32 {
+	if x != nil {
+		return x.ClientId
+	}
+	return 0
+}
+
 var File_message_message_proto protoreflect.FileDescriptor
 
 const file_message_message_proto_rawDesc = "" +
@@ -479,11 +487,12 @@ const file_message_message_proto_rawDesc = "" +
 	"\rCommitMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12 \n" +
 	"\vSequenceNum\x18\x02 \x01(\x05R\vSequenceNum\x120\n" +
-	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\"\xa9\x01\n" +
+	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\"\xc5\x01\n" +
 	"\fReplyMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12R\n" +
 	"\x16ClientRequestTimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x16ClientRequestTimestamp\x12\x16\n" +
-	"\x06Status\x18\x03 \x01(\tR\x06Status2\x9a\x02\n" +
+	"\x06Status\x18\x03 \x01(\tR\x06Status\x12\x1a\n" +
+	"\bClientId\x18\x04 \x01(\x05R\bClientId2\x9a\x02\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +

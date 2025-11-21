@@ -39,13 +39,13 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 	}
 
 	// 2. Check if already processed this request before
-	// if cachedReply, exists := node.GetCachedReply(req.ClientId, req.Timestamp); exists {
-	// 	log.Printf("[Node %d] Duplicate request from client %d (ts=%s). Returning cached reply.",
-	// 		node.nodeId, req.ClientId, req.Timestamp.AsTime())
+	if cachedReply, exists := node.GetCachedReply(req.ClientId, req.Timestamp); exists {
+		log.Printf("[Node %d] Duplicate request from client %d (ts=%s). Returning cached reply.",
+			node.nodeId, req.ClientId, req.Timestamp.AsTime())
 
-    //     // go node.sendReplyToClient(cachedReply)
-    //     return &emptypb.Empty{}, nil
-    // }
+        go node.sendReplyToClient(cachedReply)
+        return &emptypb.Empty{}, nil
+    }
 
 	// 3. Check pending requests (assigned seq but not executed)
     if seqNum, isPending := node.getPendingSeqNum(req.ClientId, req.Timestamp); isPending {
@@ -130,8 +130,6 @@ func (node *Node) broadcastAcceptMessage(msg *pb.AcceptMessage){
         }
 
 		go func(id int32, client pb.MessageServiceClient) {
-            
-            
             _, err := client.HandleAccept(context.Background(), msg)
             
             if err != nil {
@@ -153,8 +151,12 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 		msg.Ballot.RoundNumber, msg.SequenceNum,msg.Ballot.NodeId)
 
 	// 1. If valid ballot number
-	if !node.isBallotGreaterOrEqual(msg.Ballot) {
-		log.Printf("[Node %d] Rejecting ACCEPT message with old ballot number",node.nodeId)
+	node.muLeader.RLock()
+	selfBallot := node.ballot
+	node.muLeader.RUnlock()
+
+	if !node.isBallotGreaterOrEqual(msg.Ballot,selfBallot) {
+		log.Printf("[Node %d] Rejecting ACCEPT message with stale ballot number",node.nodeId)
 		
 		return &emptypb.Empty{}, nil
 	}
@@ -282,7 +284,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 	if entry.AcceptCount >= threshold{
 		log.Printf("[Node %d] Quorum reached for seq=%d, round=%d",node.nodeId,entry.SequenceNum,entry.Ballot.RoundNumber)
 		entry.Phase = PhaseCommitted
-
+		log.Printf("[Node %d] Seq=%d is now in phase=%d",node.nodeId,entry.SequenceNum,entry.Phase)
+		
 		commitMsg := &pb.CommitMessage{
 			Ballot: entry.Ballot,
 			SequenceNum: entry.SequenceNum,
@@ -293,7 +296,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 		go node.broadcastCommitMessage(commitMsg)
 
-		// go executeInorder()
+		go node.executeInOrder(true)
+
 		return &emptypb.Empty{}, nil
 	}
 
@@ -334,7 +338,157 @@ func(node *Node) broadcastCommitMessage(msg *pb.CommitMessage){
 
 
 func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*emptypb.Empty, error) {
-	log.Printf("[Node %d] Received COMMIT message from %d",node.nodeId,msg.Ballot.NodeId)
+	log.Printf("[Node %d] Received COMMIT message for seq=%d from %d",node.nodeId,msg.SequenceNum,msg.Ballot.NodeId)
+
+	node.muLog.Lock()
+	entry, exists := node.acceptLog[msg.SequenceNum]
+	
+	if !exists {
+		log.Printf("[Node %d] WARNING: No log entry for COMMIT Seq=%d. Rejecting.",
+			node.nodeId, msg.SequenceNum)
+		node.muLog.Unlock()
+		return &emptypb.Empty{}, nil
+	}
+
+	entry.mu.Lock()
+	node.muLog.Unlock()
+	
+	if !node.isBallotGreaterOrEqual(msg.Ballot,entry.Ballot) {
+		log.Printf("[Node %d] Ignoring stale COMMIT for seq=%d", node.nodeId, msg.SequenceNum)
+		entry.mu.Unlock()
+		return &emptypb.Empty{}, nil
+	}
+	
+	if entry.Phase >= PhaseCommitted {
+		log.Printf("[Node %d] INFO: Already committed/executed Seq=%d. Ignoring duplicate COMMIT.",
+			node.nodeId, msg.SequenceNum)
+		entry.mu.Unlock()
+		return &emptypb.Empty{}, nil
+	}
+
+	entry.Phase = PhaseCommitted
+	entry.mu.Unlock()
+
+	go node.executeInOrder(false)
 
 	return &emptypb.Empty{}, nil
+}
+
+func (node *Node) executeInOrder(shouldSendReply bool) {
+    node.muExec.Lock()
+    defer node.muExec.Unlock()
+
+	nextSeq := node.lastExecSeqNo + 1
+	
+	for {
+		node.muLog.Lock()
+		log.Printf("[Node %d] Running execution for seq=%d",node.nodeId,nextSeq)
+		
+		entry, exists := node.acceptLog[nextSeq]
+		if !exists {
+			log.Printf("[Node %d] Running execution no log entry for seq=%d",node.nodeId,nextSeq)
+			node.muLog.Unlock()
+			break;
+		}
+
+		entry.mu.Lock()
+		node.muLog.Unlock()
+	
+		log.Printf("[Entry while in execution] AcceptCount: %d, phase=%v",entry.AcceptCount,entry.Phase)
+
+		if entry.Phase != PhaseCommitted {
+			log.Printf("[Node %d] Running execution phase=%v is not committed for seq=%d",node.nodeId,entry.Phase,nextSeq)
+            entry.mu.Unlock()
+            break
+        }
+
+		// IF NO-OP
+		if entry.Request.ClientId == -1 {
+			log.Printf("[Node %d] EXECUTED NO-OP Seq=%d.", node.nodeId, nextSeq)
+		} else {
+
+			_, exists = node.GetCachedReply(entry.Request.ClientId, entry.Request.Timestamp)
+
+			// Non executed new request
+			if !exists {	
+				log.Printf("[Node %d] Never executed before execution phase=%v is not committed for seq=%d",node.nodeId,entry.Phase,nextSeq)
+
+				node.muState.Lock()
+
+				var status string
+				
+				// Execute the request
+				log.Printf("[Node %d] [Ballot %d] EXECUTING: Seq=%d, Client=%d, Sender=%s, Receiver=%s, Amount=%d",
+					node.nodeId, entry.Ballot.RoundNumber,entry.SequenceNum, entry.Request.ClientId,
+					entry.Request.Transaction.Sender, entry.Request.Transaction.Receiver,
+					entry.Request.Transaction.Amount)
+				
+				
+				transaction := Transaction{
+					Sender:   entry.Request.Transaction.Sender,
+					Receiver: entry.Request.Transaction.Receiver,
+					Amount:   entry.Request.Transaction.Amount,
+				}
+
+				response, _ := node.processTransaction(transaction)
+
+				status = "failure"
+				if response {
+					status = "success"
+				}
+			
+				node.persistState()
+				
+
+				reply := &pb.ReplyMessage{
+					ClientId:         entry.Request.ClientId,
+					ClientRequestTimestamp: entry.Request.Timestamp,
+					Status:           status,
+					Ballot: entry.Ballot,
+				}
+
+				// Check if we should create a checkpoint
+				// if nextSeq % node.checkpointInterval == 0{
+				// 	stateDigest := node.computeStateDigest()
+				// 	go node.createAndBroadcastCheckpoint(nextSeq,stateDigest,entry.View)
+				// }
+
+				node.muState.Unlock()
+
+				node.cacheReplyAndClearPending(reply)
+				
+				if shouldSendReply {
+					go node.sendReplyToClient(reply)
+				}
+				
+				log.Printf("[Node %d] EXECUTED: Seq=%d successfully. Status=%s", node.nodeId, entry.SequenceNum, status)
+			}
+		}
+
+		entry.Phase = PhaseExecuted
+		entry.mu.Unlock()
+
+		node.lastExecSeqNo = nextSeq
+
+		// Liveness timer 
+		// When the request is executed, there are two cases:
+		// (a) There is no pending (received but not executed) request on the node: the timer stops (and it is initiated when the node receives the next request)
+		// (b) There are pending requests on the node: the timer resets
+		// if node.hasPendingWork() {
+		// 	log.Printf("[Node %d] Pending work present restarting liveness timer",node.nodeId)
+		// 	node.livenessTimer.Restart()
+		// } else {
+		// 	log.Printf("[Node %d] No pending work present stopping liveness timer",node.nodeId)
+		// 	node.livenessTimer.Stop()
+		// }
+
+		nextSeq++
+	}
+}
+
+
+func(node *Node) sendReplyToClient(reply *pb.ReplyMessage){
+	grpcClient, _ := node.getConnForClient(reply.ClientId)
+
+	grpcClient.HandleReply(context.Background(),reply)
 }

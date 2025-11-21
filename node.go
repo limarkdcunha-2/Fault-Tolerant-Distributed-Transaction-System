@@ -60,6 +60,13 @@ type Node struct {
 	muPending sync.RWMutex
     pendingRequests map[string]int32
 
+	muExec        sync.Mutex
+	lastExecSeqNo int32
+	// catchUpExecSeqNo int32
+
+	muState sync.RWMutex
+    state   map[string]int32
+
 	peers map[int32]pb.MessageServiceClient
 
 	muConn sync.Mutex
@@ -85,13 +92,15 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		portNo: portNo,
 		ballot: ballot,
 		currentSeqNo: 0,
+		lastExecSeqNo:0,
+		state:make(map[string]int32),
 		acceptLog:make(map[int32]*LogEntry),
 		peers: make( map[int32]pb.MessageServiceClient),
 		replies: make(map[string]*pb.ReplyMessage),
 		pendingRequests: make(map[string]int32),
 		clientConns:make(map[int32]*grpc.ClientConn),
 	}
-
+	
 	// Building peer connections
 	for _, nodeConfig := range getNodeCluster() {
         if nodeConfig.NodeId == nodeId {
@@ -109,6 +118,12 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 
         newNode.peers[nodeConfig.NodeId] = client
     }
+
+	// Loading state TO DO update with SQLlite
+	if err := newNode.loadState(); err != nil {
+        return nil, fmt.Errorf("failed to load initial state: %w", err)
+    }
+    log.Printf("[Node %d] State successfully loaded into memory.", newNode.nodeId)
 
 	return newNode,nil
 }
@@ -149,15 +164,69 @@ func (node *Node) markRequestPending(clientId int32, timestamp *timestamppb.Time
 }
 
 
-func(node *Node) isBallotGreaterOrEqual(ballotFromMsg *pb.BallotNumber) bool {
-	node.muLeader.RLock()	
-	selfBallot := node.ballot
-	node.muLeader.RUnlock()
-
-	if selfBallot.RoundNumber != ballotFromMsg.RoundNumber {
-		return ballotFromMsg.RoundNumber >= selfBallot.RoundNumber
+func(node *Node) isBallotGreaterOrEqual(ballotFromMsg *pb.BallotNumber,ballotFromNode *pb.BallotNumber,) bool {
+	if ballotFromNode.RoundNumber != ballotFromMsg.RoundNumber {
+		return ballotFromMsg.RoundNumber >= ballotFromNode.RoundNumber
 	}
 
-	return ballotFromMsg.NodeId >= selfBallot.NodeId
+	return ballotFromMsg.NodeId >= ballotFromNode.NodeId
 }
 
+func (node *Node) RecordReply(reply *pb.ReplyMessage) {
+	key := makeRequestKey(reply.ClientId, reply.ClientRequestTimestamp)
+
+	node.muReplies.Lock()
+	defer node.muReplies.Unlock()
+
+	node.replies[key] = reply
+}
+
+func (node *Node) removePendingRequest(clientId int32, timestamp *timestamppb.Timestamp) {
+    node.muPending.Lock()
+    defer node.muPending.Unlock()
+    
+    key := makeRequestKey(clientId, timestamp)
+    delete(node.pendingRequests, key)
+    
+    log.Printf("Node %d: Removed PENDING request from client %d", node.nodeId, clientId)
+}
+
+
+func (node *Node) cacheReplyAndClearPending(reply *pb.ReplyMessage) {
+    // Remove from pending
+    node.removePendingRequest(reply.ClientId, reply.ClientRequestTimestamp)
+    
+   node.RecordReply(reply)
+}
+
+func (node *Node) getConnForClient(targetClientId int32) (pb.ClientServiceClient, *grpc.ClientConn) {
+	node.muConn.Lock()
+	defer node.muConn.Unlock()
+
+	if conn, ok := node.clientConns[targetClientId]; ok && conn != nil {
+		return pb.NewClientServiceClient(conn), conn
+	}
+
+	var targetClient *ClientConfig
+	for _, config := range getClientCluster() {
+		if config.ClientId == int(targetClientId) {
+			targetClient = &config
+			break
+		}
+	}
+	if targetClient == nil {
+		log.Printf("[Node %d] Client configuration for ID %d not found.",node.nodeId , targetClientId)
+		return nil, nil
+	}
+
+	targetAddr := fmt.Sprintf(":%d", targetClient.Port)
+	conn, err := grpc.NewClient(targetAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	if err != nil {
+		log.Printf("[NOde %d] Failed to connect to client %d at %s: %v", node.nodeId, targetClientId, targetAddr, err)
+		return nil, nil
+	}
+
+	node.clientConns[targetClientId] = conn
+	return pb.NewClientServiceClient(conn), conn
+}

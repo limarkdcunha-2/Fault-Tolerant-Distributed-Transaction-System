@@ -179,8 +179,8 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 		node.muLog.Unlock()
 
 		// Check if already acceped then send accepted message again
-		if existingEntry.Phase >= PhaseAccepted {
-			log.Printf("[Node %d] Seq=%d already in status %v, not overwriting to accepted",
+		if existingEntry.Phase == PhaseAccepted {
+			log.Printf("[Node %d] Seq=%d already in status %v",
                 node.nodeId, msg.SequenceNum, existingEntry.Phase)
 
 			acceptedMessage := &pb.AcceptedMessage{
@@ -193,15 +193,20 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 			existingEntry.mu.Unlock()
 
 			go node.sendAcceptedMessage(acceptedMessage)
-		}
-		
 
-	} else {
-		node.muLog.Unlock()
+			return &emptypb.Empty{}, nil
+		} else if existingEntry.Phase > PhaseAccepted {
+			// If already committed or executed , do nothing
+			log.Printf("[Node %d] Seq=%d already in status %v not overriding to Accepted",
+                node.nodeId, msg.SequenceNum, existingEntry.Phase)
+
+			existingEntry.mu.Unlock()
+
+			return &emptypb.Empty{}, nil
+		}	
 	}
 
 	// 5. If the msg is being seen for first time lets log it and send corresponding accepted message
-	node.muLog.Lock()
 	newEntry := &LogEntry{
         SequenceNum: msg.SequenceNum,
         Ballot:        msg.Ballot,
@@ -340,24 +345,51 @@ func(node *Node) broadcastCommitMessage(msg *pb.CommitMessage){
 func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*emptypb.Empty, error) {
 	log.Printf("[Node %d] Received COMMIT message for seq=%d from %d",node.nodeId,msg.SequenceNum,msg.Ballot.NodeId)
 
-	node.muLog.Lock()
-	entry, exists := node.acceptLog[msg.SequenceNum]
-	
-	if !exists {
-		log.Printf("[Node %d] WARNING: No log entry for COMMIT Seq=%d. Rejecting.",
-			node.nodeId, msg.SequenceNum)
-		node.muLog.Unlock()
+	// 1. Check for valid ballot number
+	node.muLeader.RLock()
+	selfBallot := node.ballot
+	node.muLeader.RUnlock()
+
+	if !node.isBallotGreaterOrEqual(msg.Ballot,selfBallot) {
+		log.Printf("[Node %d] Rejecting COMMIT message with stale ballot number",node.nodeId)
+		
 		return &emptypb.Empty{}, nil
 	}
 
+	// 2. Check if entry exists
+	node.muLog.Lock()
+	entry, exists := node.acceptLog[msg.SequenceNum]
+	
+	// 2a If it doesnt exist that means we have received COMMIT before its ACCEPT ie other nodes have reached quorum
+	if !exists {
+		log.Printf("[Node %d] WARNING: No log entry for COMMIT Seq=%d.Creating new entry",
+			node.nodeId, msg.SequenceNum)
+
+		newEntry := &LogEntry{
+			SequenceNum: msg.SequenceNum,
+			Ballot: msg.Ballot,
+			Request: msg.Request,
+			Phase: PhaseCommitted,
+		}
+		node.acceptLog[msg.SequenceNum] = newEntry
+
+		node.muLog.Unlock()
+
+		go node.executeInOrder(false)
+
+		return &emptypb.Empty{}, nil
+	}
+
+	// 2b entry already exisits thus we simply need to check if already committed
+	// If not update it to committed
 	entry.mu.Lock()
 	node.muLog.Unlock()
 	
-	if !node.isBallotGreaterOrEqual(msg.Ballot,entry.Ballot) {
-		log.Printf("[Node %d] Ignoring stale COMMIT for seq=%d", node.nodeId, msg.SequenceNum)
-		entry.mu.Unlock()
-		return &emptypb.Empty{}, nil
-	}
+	// if !node.isBallotGreaterOrEqual(msg.Ballot,entry.Ballot) {
+	// 	log.Printf("[Node %d] Ignoring stale COMMIT for seq=%d", node.nodeId, msg.SequenceNum)
+	// 	entry.mu.Unlock()
+	// 	return &emptypb.Empty{}, nil
+	// }
 	
 	if entry.Phase >= PhaseCommitted {
 		log.Printf("[Node %d] INFO: Already committed/executed Seq=%d. Ignoring duplicate COMMIT.",

@@ -57,20 +57,26 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 		return &emptypb.Empty{}, nil
 	}
 
-	// 2. Check if already processed this request before
+	node.handleRequest(req,leaderId)
+	
+	return &emptypb.Empty{}, nil
+}
+
+func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
+		// 2. Check if already processed this request before
 	if cachedReply, exists := node.GetCachedReply(req.ClientId, req.Timestamp); exists {
 		log.Printf("[Node %d] Duplicate request from client %d (ts=%s). Returning cached reply.",
 			node.nodeId, req.ClientId, req.Timestamp.AsTime())
 
         go node.sendReplyToClient(cachedReply)
-        return &emptypb.Empty{}, nil
+        return
     }
 
 	// 3. Check pending requests (assigned seq but not executed)
     if isPending := node.checkIfPending(req.ClientId, req.Timestamp); isPending {
         log.Printf("Node %d: Duplicate (pending) from client %d - ignoring retry",
             node.nodeId, req.ClientId)
-        return &emptypb.Empty{}, nil  // Don't process again
+        return
     }
 
 	// 4. Reroute the request to leader
@@ -83,7 +89,8 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 			node.livenessTimer.Start()
 		}
 		
-		return node.peers[leaderId].SendRequestMessage(ctx,req)
+		node.peers[leaderId].SendRequestMessage(context.Background(),req)
+		return
 	}
 
 	// 5. Assign seq number
@@ -129,8 +136,6 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 
 	// 8. Broadcast accept message
 	go node.broadcastAcceptMessage(acceptMessage)
-	
-	return &emptypb.Empty{}, nil
 }
 
 func (node *Node) broadcastAcceptMessage(msg *pb.AcceptMessage){
@@ -688,6 +693,7 @@ func(node *Node) sendPromiseMessage(msg *pb.PromiseMessage){
 func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emptypb.Empty, error) {
 	log.Printf("[Node %d] Received PROMISE for Ballot (R:%d) from node=%d",node.nodeId,msg.Ballot.RoundNumber,msg.NodeId)
 
+	// 1. Valid ballot check
 	node.muBallot.RLock()
 	selfBallot := node.promisedBallotPrepare
 	node.muBallot.RUnlock()
@@ -700,6 +706,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 
 	log.Printf("[Node %d] PROMISE Ballot check complete (R:%d) from node=%d",node.nodeId,msg.Ballot.RoundNumber,msg.NodeId)
 
+	// 2. Check if already logged the promise
 	node.muProLog.Lock()
 	_,exists := node.promiseLog.log[msg.NodeId]
 
@@ -709,7 +716,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		return &emptypb.Empty{},nil
 	}
 
-	// Quorum already reached so can ignore
+	// 3. Check if quorum already reached
 	if node.promiseLog.isPromiseQuorumReached {
 		node.muProLog.Unlock()
 		log.Printf("[Node %d] Rejecting PROMISE quorum already reached",node.nodeId)
@@ -723,28 +730,32 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 
 	threshold := node.f+1
 
+	// 4. Check for quorum
 	if count >= threshold {
 		log.Printf("[Node %d] Reached quorum for PROMISE with ballot (R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
 		node.promiseLog.isPromiseQuorumReached = true
 
+		// 4a Build merged accept log from promises
 		mergedLog := node.buildMergedAcceptLog()
 
 		node.muProLog.Unlock()
 
-		// Update ballot number
+		// 4b. Update self ballot number
 		node.muBallot.Lock()
 		node.promisedBallotAccept = node.promisedBallotPrepare
 		node.myBallot = node.promisedBallotPrepare
 		node.muBallot.Unlock()
 
+		// 4c. Updated election state pointers
 		node.muLeader.Lock()
 		node.isLeaderKnown = true
 		node.inLeaderElection = false
 		node.muLeader.Unlock()
 
-		// Install new log unto self
+		// 4d. Install new log unto self
 		node.installMergedAcceptLog(mergedLog)
 
+		// 4e. Broadcast new view
 		newViewMsg := &pb.NewViewMessage{
 			Ballot: selfBallot,
 			AcceptLog: mergedLog,
@@ -752,7 +763,10 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		}
 
 		go node.broadcastNewView(newViewMsg)
-			
+
+		// 4f. Start draining pending requests queue
+		node.drainQueuedRequests(node.nodeId)
+
 		return &emptypb.Empty{},nil
 	}
 
@@ -878,6 +892,24 @@ func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
             }
         }(nodeId, peerClient)
 	}
+}
+
+func(node *Node) drainQueuedRequests(leaderId int32){
+	node.muReqQue.Lock()
+    queued := node.requestsQueue
+    node.requestsQueue = make([]*pb.ClientRequest, 0)
+    node.muReqQue.Unlock()
+
+    if len(queued) == 0 {
+        return
+    }
+
+	log.Printf("[Node %d] Draining %d queued client requests", node.nodeId, len(queued))
+
+    for _, req := range queued {
+        // Reuse normal request handling path
+        go node.handleRequest(req, leaderId)
+    }
 }
 
 func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emptypb.Empty, error) {

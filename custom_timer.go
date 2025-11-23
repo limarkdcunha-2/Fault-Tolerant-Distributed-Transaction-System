@@ -28,21 +28,6 @@ func NewCustomTimer(t time.Duration, onExpired func()) *CustomTimer {
 	}
 }
 
-// GetPredefinedTime returns the time given to timer at input level
-func (ct *CustomTimer) GetPredefinedTime() time.Duration {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-	return ct.predefinedTime
-}
-
-// UpdatePredefinedTime updates the predefined time
-func (ct *CustomTimer) UpdatePredefinedTime(newTime time.Duration) {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
-	ct.predefinedTime = newTime
-}
-
-// Start starts the timer from 0 and waits for the predefined time T
 func (ct *CustomTimer) Start() {
 	ct.mu.Lock()
 	if ct.running {
@@ -51,6 +36,7 @@ func (ct *CustomTimer) Start() {
 	}
 	ct.running = true
 	ct.stopChan = make(chan bool)
+	currentStopChan := ct.stopChan
 	ct.mu.Unlock()
 
 	go func() {
@@ -61,24 +47,29 @@ func (ct *CustomTimer) Start() {
 		case <-timer.C:
 			// Timer expired naturally
 			ct.mu.Lock()
-			wasRunning := ct.running
+			if ct.stopChan != currentStopChan {
+				ct.mu.Unlock()
+				return
+			}
+
 			ct.running = false
 			ct.mu.Unlock()
 			
-			if wasRunning && ct.onExpired != nil {
+			if ct.onExpired != nil {
 				log.Println("Timer expired, running callback...")
 				ct.onExpired()
 			}
 		case <-ct.stopChan:
 			// Timer was stopped/paused
 			ct.mu.Lock()
-			ct.running = false
+			if ct.stopChan == currentStopChan {
+				ct.running = false
+			}
 			ct.mu.Unlock()
 		}
 	}()
 }
 
-// Stop pauses the timer
 func (ct *CustomTimer) Stop() {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
@@ -92,7 +83,7 @@ func (ct *CustomTimer) Restart() {
 	ct.Stop()
 	// Small delay to ensure clean stop
 	// DO NOT reduce this futher
-	time.Sleep(100 * time.Microsecond) 
+	// time.Sleep(100 * time.Microsecond) 
 	ct.Start()
 }
 
@@ -100,4 +91,16 @@ func (ct *CustomTimer) IsRunning() bool {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	return ct.running
+}
+
+func (ct *CustomTimer) GetPredefinedTime() time.Duration {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	return ct.predefinedTime
+}
+
+func (ct *CustomTimer) UpdatePredefinedTime(newTime time.Duration) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	ct.predefinedTime = newTime
 }

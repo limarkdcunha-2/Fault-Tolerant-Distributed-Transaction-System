@@ -90,7 +90,9 @@ func (ct *CustomTimer) Stop() {
 
 func (ct *CustomTimer) Restart() {
 	ct.Stop()
-	time.Sleep(2 * time.Millisecond) // Small delay to ensure clean stop
+	// Small delay to ensure clean stop
+	// DO NOT reduce this futher
+	time.Sleep(100 * time.Microsecond) 
 	ct.Start()
 }
 

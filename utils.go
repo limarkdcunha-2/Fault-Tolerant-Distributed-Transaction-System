@@ -84,6 +84,7 @@ func (node *Node) PrintAcceptLogUtil() {
         phase := entry.Phase
         sequenceNum := entry.SequenceNum
         ballotRound := entry.Ballot.RoundNumber
+        ballotNodeId := entry.Ballot.NodeId
         req := entry.Request
         entry.mu.Unlock()
 
@@ -100,12 +101,12 @@ func (node *Node) PrintAcceptLogUtil() {
 
         // Format and print based on request type
         if req != nil {
-			fmt.Printf("  Seq=%d | Round=%d | Status=%s | %s -> %s : %d\n",
-				sequenceNum, ballotRound, status,
+			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Status=%s | %s -> %s : %d\n",
+				sequenceNum, ballotRound,ballotNodeId, status,
 				req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
         } else {
-            fmt.Printf("  Seq=%d | Round=%d | Status=%s | NO-OP\n",
-                sequenceNum, ballotRound, status)
+            fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Status=%s | NO-OP\n",
+                sequenceNum, ballotRound,ballotNodeId, status)
         }
     }
     

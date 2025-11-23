@@ -293,7 +293,7 @@ func (node *Node) cacheReplyAndClearPending(reply *pb.ReplyMessage) {
 }
 
 func (node *Node) requestsAreEqual(r1, r2 *pb.ClientRequest) bool {
-    return r1.ClientId == r2.ClientId && r1.Timestamp == r2.Timestamp
+    return r1.ClientId == r2.ClientId && r1.Timestamp.AsTime().Equal(r2.Timestamp.AsTime())
 }
 
 func (node *Node) getConnForClient(targetClientId int32) (pb.ClientServiceClient, *grpc.ClientConn) {

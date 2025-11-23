@@ -31,7 +31,7 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 	// 1. Check if a leader exists
 	if leaderId == 0 {
 		// 1a Log the requests to be processed after leader is elected
-		log.Printf("[Node %d] Leader doesnt exist so queuing the client request",node.nodeId)
+		// log.Printf("[Node %d] Leader doesnt exist so queuing the client request",node.nodeId)
 		
 		node.muReqQue.Lock()
 
@@ -45,6 +45,9 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 		}
 
 		if !alreadyExists {
+			log.Printf("[Node %d] Adding req (%s, %s, %d) wiht timestamp=%vto queue since leader not known yet",node.nodeId,
+		req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount,req.Timestamp)
+
 			node.requestsQueue = append(node.requestsQueue, req)
 
 			if !node.livenessTimer.IsRunning(){
@@ -98,6 +101,9 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 	node.currentSeqNo++
 	seq := node.currentSeqNo
 	node.muLog.Unlock()
+
+	log.Printf("[Node %d] Assigning seq=%d to request (%s, %s, %d)",
+	node.nodeId,seq,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
 	// 6. Mark this request in processing
 	node.markRequestPending(req.ClientId, req.Timestamp)
@@ -500,7 +506,7 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 
 			// Non executed new request
 			if !exists {	
-				log.Printf("[Node %d] Never executed before execution phase=%v is not committed for seq=%d",node.nodeId,entry.Phase,nextSeq)
+				log.Printf("[Node %d] Request for seq=%d has never been executed before",node.nodeId,nextSeq)
 
 				node.muState.Lock()
 
@@ -907,7 +913,6 @@ func(node *Node) drainQueuedRequests(leaderId int32){
 	log.Printf("[Node %d] Draining %d queued client requests", node.nodeId, len(queued))
 
     for _, req := range queued {
-        // Reuse normal request handling path
         go node.handleRequest(req, leaderId)
     }
 }

@@ -101,7 +101,7 @@ func (node *Node) PrintAcceptLogUtil() {
 
         // Format and print based on request type
         if req != nil {
-			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Status=%s | %s -> %s : %d\n",
+			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Status=%s | (%s, %s, %d)\n",
 				sequenceNum, ballotRound,ballotNodeId, status,
 				req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
         } else {

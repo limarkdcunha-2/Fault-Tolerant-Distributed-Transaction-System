@@ -139,7 +139,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		requestsQueue:make([]*pb.ClientRequest, 0),
 	}
 
-	randomTime := time.Duration(rand.Intn(100)+50) * time.Millisecond
+	randomTime := time.Duration(rand.Intn(100)+100) * time.Millisecond
 	newNode.livenessTimer = NewCustomTimer(randomTime,newNode.onLivenessTimerExpired)
 
 	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)

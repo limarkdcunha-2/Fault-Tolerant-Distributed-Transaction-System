@@ -59,12 +59,32 @@ message ReplyMessage {
   int32 ClientId = 4;
 }
 
+message PrepareMessage {
+  BallotNumber Ballot = 1;
+}
+
+
+message PromiseMessage{
+  BallotNumber Ballot = 1;
+  repeated AcceptedMessage AcceptLog = 2;
+  int32 NodeId = 3;
+}
+
+message NewViewMessage {
+  BallotNumber Ballot = 1;
+  repeated AcceptedMessage AcceptLog = 2;
+  int32 NodeId = 3;
+}
 
 service MessageService {
   rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
   rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
   rpc HandleAccepted(AcceptedMessage) returns (google.protobuf.Empty);
   rpc HandleCommit(CommitMessage) returns (google.protobuf.Empty);
+
+  rpc HandlePrepare(PrepareMessage) returns (google.protobuf.Empty);
+  rpc HandlePromise(PromiseMessage) returns (google.protobuf.Empty);
+  rpc HandleNewView(NewViewMessage) returns (google.protobuf.Empty);
 
   rpc PrintAcceptLog(google.protobuf.Empty) returns (google.protobuf.Empty);
 }

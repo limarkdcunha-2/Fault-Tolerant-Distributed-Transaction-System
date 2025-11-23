@@ -32,6 +32,9 @@ const (
 	MessageService_HandleAccept_FullMethodName       = "/message.MessageService/HandleAccept"
 	MessageService_HandleAccepted_FullMethodName     = "/message.MessageService/HandleAccepted"
 	MessageService_HandleCommit_FullMethodName       = "/message.MessageService/HandleCommit"
+	MessageService_HandlePrepare_FullMethodName      = "/message.MessageService/HandlePrepare"
+	MessageService_HandlePromise_FullMethodName      = "/message.MessageService/HandlePromise"
+	MessageService_HandleNewView_FullMethodName      = "/message.MessageService/HandleNewView"
 	MessageService_PrintAcceptLog_FullMethodName     = "/message.MessageService/PrintAcceptLog"
 )
 
@@ -43,6 +46,9 @@ type MessageServiceClient interface {
 	HandleAccept(ctx context.Context, in *AcceptMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleAccepted(ctx context.Context, in *AcceptedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleCommit(ctx context.Context, in *CommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandlePrepare(ctx context.Context, in *PrepareMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandlePromise(ctx context.Context, in *PromiseMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleNewView(ctx context.Context, in *NewViewMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -94,6 +100,36 @@ func (c *messageServiceClient) HandleCommit(ctx context.Context, in *CommitMessa
 	return out, nil
 }
 
+func (c *messageServiceClient) HandlePrepare(ctx context.Context, in *PrepareMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandlePrepare_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) HandlePromise(ctx context.Context, in *PromiseMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandlePromise_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) HandleNewView(ctx context.Context, in *NewViewMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandleNewView_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *messageServiceClient) PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -112,6 +148,9 @@ type MessageServiceServer interface {
 	HandleAccept(context.Context, *AcceptMessage) (*emptypb.Empty, error)
 	HandleAccepted(context.Context, *AcceptedMessage) (*emptypb.Empty, error)
 	HandleCommit(context.Context, *CommitMessage) (*emptypb.Empty, error)
+	HandlePrepare(context.Context, *PrepareMessage) (*emptypb.Empty, error)
+	HandlePromise(context.Context, *PromiseMessage) (*emptypb.Empty, error)
+	HandleNewView(context.Context, *NewViewMessage) (*emptypb.Empty, error)
 	PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedMessageServiceServer()
 }
@@ -134,6 +173,15 @@ func (UnimplementedMessageServiceServer) HandleAccepted(context.Context, *Accept
 }
 func (UnimplementedMessageServiceServer) HandleCommit(context.Context, *CommitMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleCommit not implemented")
+}
+func (UnimplementedMessageServiceServer) HandlePrepare(context.Context, *PrepareMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandlePrepare not implemented")
+}
+func (UnimplementedMessageServiceServer) HandlePromise(context.Context, *PromiseMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandlePromise not implemented")
+}
+func (UnimplementedMessageServiceServer) HandleNewView(context.Context, *NewViewMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleNewView not implemented")
 }
 func (UnimplementedMessageServiceServer) PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintAcceptLog not implemented")
@@ -231,6 +279,60 @@ func _MessageService_HandleCommit_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_HandlePrepare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrepareMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandlePrepare(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandlePrepare_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandlePrepare(ctx, req.(*PrepareMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_HandlePromise_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PromiseMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandlePromise(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandlePromise_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandlePromise(ctx, req.(*PromiseMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_HandleNewView_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NewViewMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandleNewView(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandleNewView_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandleNewView(ctx, req.(*NewViewMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MessageService_PrintAcceptLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -271,6 +373,18 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HandleCommit",
 			Handler:    _MessageService_HandleCommit_Handler,
+		},
+		{
+			MethodName: "HandlePrepare",
+			Handler:    _MessageService_HandlePrepare_Handler,
+		},
+		{
+			MethodName: "HandlePromise",
+			Handler:    _MessageService_HandlePromise_Handler,
+		},
+		{
+			MethodName: "HandleNewView",
+			Handler:    _MessageService_HandleNewView_Handler,
 		},
 		{
 			MethodName: "PrintAcceptLog",

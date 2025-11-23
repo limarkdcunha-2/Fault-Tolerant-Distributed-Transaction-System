@@ -8,8 +8,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"strconv"
 	"sync"
+	"time"
 	pb "transaction-processor/message"
 
 	"google.golang.org/grpc"
@@ -37,6 +39,16 @@ type LogEntry struct {
 	Phase Phase
 }
 
+type PrepareLog struct {
+	log []*pb.PrepareMessage
+	highestBallotPrepare *pb.PrepareMessage
+}
+
+type PromiseLog struct {
+	log map[int32]*pb.PromiseMessage
+	isPromiseQuorumReached bool
+}
+
 type Node struct {
 	pb.UnimplementedMessageServiceServer
 
@@ -45,9 +57,10 @@ type Node struct {
 	N int32
 	f int32
 
-	muLeader sync.RWMutex
-	ballot *pb.BallotNumber
-	// inLeaderElection bool
+	muBallot sync.RWMutex
+	myBallot *pb.BallotNumber
+	promisedBallotAccept  *pb.BallotNumber
+	promisedBallotPrepare *pb.BallotNumber
 
 	muLog sync.RWMutex
 	currentSeqNo int32
@@ -58,7 +71,7 @@ type Node struct {
 	replies map[string]*pb.ReplyMessage
 
 	muPending sync.RWMutex
-    pendingRequests map[string]int32
+    pendingRequests map[string]bool
 
 	muExec        sync.Mutex
 	lastExecSeqNo int32
@@ -66,6 +79,22 @@ type Node struct {
 
 	muState sync.RWMutex
     state   map[string]int32
+
+	muReqQue sync.RWMutex
+	requestsQueue []*pb.ClientRequest
+
+	muLeader sync.RWMutex
+	inLeaderElection bool
+	isLeaderKnown bool
+	livenessTimer *CustomTimer
+	
+	prepareTimer *CustomTimer
+
+	muPreLog sync.RWMutex
+	prepareLog PrepareLog
+
+	muProLog sync.RWMutex
+	promiseLog PromiseLog
 
 	peers map[int32]pb.MessageServiceClient
 
@@ -79,9 +108,13 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 	N := int32(len(getNodeCluster()))
 	f := (N - 1) / 2
 
-	ballot := &pb.BallotNumber{
-		// Change later
-		NodeId: 1,
+	myBallot := &pb.BallotNumber{
+		NodeId: nodeId,
+		RoundNumber: 0,
+	}
+
+	defaultPromisedBallot := &pb.BallotNumber{
+		NodeId: 0,
 		RoundNumber: 0,
 	}
 
@@ -90,17 +123,32 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		N:N,
 		f:f,
 		portNo: portNo,
-		ballot: ballot,
+		myBallot: myBallot,
+		promisedBallotAccept:defaultPromisedBallot,
+		promisedBallotPrepare: defaultPromisedBallot,
 		currentSeqNo: 0,
 		lastExecSeqNo:0,
+		inLeaderElection:false,
+		isLeaderKnown:false,
 		state:make(map[string]int32),
 		acceptLog:make(map[int32]*LogEntry),
 		peers: make( map[int32]pb.MessageServiceClient),
 		replies: make(map[string]*pb.ReplyMessage),
-		pendingRequests: make(map[string]int32),
+		pendingRequests: make(map[string]bool),
 		clientConns:make(map[int32]*grpc.ClientConn),
+		requestsQueue:make([]*pb.ClientRequest, 0),
 	}
-	
+
+	randomTime := time.Duration(rand.Intn(100)+50) * time.Millisecond
+	newNode.livenessTimer = NewCustomTimer(randomTime,newNode.onLivenessTimerExpired)
+
+	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)
+
+	newNode.prepareLog = PrepareLog{
+		log: make([]*pb.PrepareMessage,0),
+		highestBallotPrepare: nil,
+	}
+
 	// Building peer connections
 	for _, nodeConfig := range getNodeCluster() {
         if nodeConfig.NodeId == nodeId {
@@ -132,6 +180,13 @@ func makeRequestKey(clientId int32, timestamp *timestamppb.Timestamp) string {
 	return fmt.Sprintf("%d-%d", clientId, timestamp.AsTime().UnixNano())
 }
 
+func (node *Node) isLeader() bool {
+	node.muBallot.RLock()
+	defer node.muBallot.Unlock()
+
+	return node.promisedBallotAccept.NodeId == node.nodeId
+}
+
 
 func (node *Node) GetCachedReply(clientId int32, timestamp  *timestamppb.Timestamp) (*pb.ReplyMessage, bool) {
 	key := makeRequestKey(clientId, timestamp)
@@ -143,33 +198,71 @@ func (node *Node) GetCachedReply(clientId int32, timestamp  *timestamppb.Timesta
 	return reply, exists
 }
 
-func (node *Node) getPendingSeqNum(clientId int32, timestamp *timestamppb.Timestamp) (int32, bool) {
+func (node *Node) checkIfPending(clientId int32, timestamp *timestamppb.Timestamp) bool {
     node.muPending.RLock()
     defer node.muPending.RUnlock()
     
     key := makeRequestKey(clientId, timestamp)
-    seqNum, exists := node.pendingRequests[key]
-    return seqNum, exists
+    _, exists := node.pendingRequests[key]
+    return exists
 }
 
-func (node *Node) markRequestPending(clientId int32, timestamp *timestamppb.Timestamp, seqNum int32) {
+func (node *Node) hasPendingWork() bool {
+    node.muPending.RLock()
+    pendingCount := len(node.pendingRequests)
+    node.muPending.RUnlock()
+
+    return pendingCount > 0 
+}
+
+func (node *Node) markRequestPending(clientId int32, timestamp *timestamppb.Timestamp) {
     node.muPending.Lock()
     defer node.muPending.Unlock()
     
     key := makeRequestKey(clientId, timestamp)
-    node.pendingRequests[key] = seqNum
+    node.pendingRequests[key] = true
     
-    log.Printf("Node %d: Marked request from client %d as PENDING (seq %d)", 
-        node.nodeId, clientId, seqNum)
+    log.Printf("Node %d: Marked request from client %d as PENDING", 
+        node.nodeId, clientId)
 }
 
+func (node *Node) isBallotEqual(b1, b2 *pb.BallotNumber) bool {
+    if b1 == nil || b2 == nil {
+        return false 
+    }
+    return b1.RoundNumber == b2.RoundNumber && b1.NodeId == b2.NodeId
+}
 
-func(node *Node) isBallotGreaterOrEqual(ballotFromMsg *pb.BallotNumber,ballotFromNode *pb.BallotNumber,) bool {
-	if ballotFromNode.RoundNumber != ballotFromMsg.RoundNumber {
-		return ballotFromMsg.RoundNumber >= ballotFromNode.RoundNumber
-	}
+func (node *Node) isBallotGreaterThan(b1, b2 *pb.BallotNumber) bool {
+    if b1 == nil || b2 == nil {
+        return false
+    }
+    
+    if b1.RoundNumber > b2.RoundNumber {
+        return true
+    }
+    
+    if b1.RoundNumber == b2.RoundNumber && b1.NodeId > b2.NodeId {
+        return true
+    }
+    
+    return false
+}
 
-	return ballotFromMsg.NodeId >= ballotFromNode.NodeId
+func (node *Node) isBallotLessThan(b1, b2 *pb.BallotNumber) bool {
+    if b1 == nil || b2 == nil {
+        return false
+    }
+
+    if b1.RoundNumber < b2.RoundNumber {
+        return true
+    }
+
+    if b1.RoundNumber == b2.RoundNumber && b1.NodeId < b2.NodeId {
+        return true
+    }
+
+    return false
 }
 
 func (node *Node) RecordReply(reply *pb.ReplyMessage) {
@@ -197,6 +290,10 @@ func (node *Node) cacheReplyAndClearPending(reply *pb.ReplyMessage) {
     node.removePendingRequest(reply.ClientId, reply.ClientRequestTimestamp)
     
    node.RecordReply(reply)
+}
+
+func (node *Node) requestsAreEqual(r1, r2 *pb.ClientRequest) bool {
+    return r1.ClientId == r2.ClientId && r1.Timestamp == r2.Timestamp
 }
 
 func (node *Node) getConnForClient(targetClientId int32) (pb.ClientServiceClient, *grpc.ClientConn) {

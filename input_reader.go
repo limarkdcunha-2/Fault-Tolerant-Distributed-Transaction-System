@@ -108,8 +108,8 @@ func parseTestCases(filePath string) (map[int]TestCase, error) {
 
 
 func getAllTestCases() map[int]TestCase {
-	filePath := "test10k.csv"
-	// filePath := "testcases3.csv"
+	filePath := "test1.csv"
+    
 	log.Printf("Parsing test cases from: %s\n", filePath)
 
 	testCases, err := parseTestCases(filePath)

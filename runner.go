@@ -6,10 +6,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 	pb "transaction-processor/message"
@@ -78,6 +81,10 @@ func (r *Runner) RunAllTestSets() {
     log.Printf("[Runner] Loaded config for %d nodes and %d clients\n", len(r.nodeConfigs), len(r.localClients))
 
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
+        if setNum > 2 {
+            break
+        }
+
         tc := r.testCases[setNum]
         fmt.Printf("\n=========================================\n")
         fmt.Printf("[Runner] Running Set %d — live nodes %v\n", tc.SetNumber, tc.LiveNodes)
@@ -89,7 +96,7 @@ func (r *Runner) RunAllTestSets() {
         //     r.ResetAllClients(r.localClients)
         // }
 
-        // r.ConfigureNodesForSet(tc)
+        r.UpdateActiveNodes(tc.LiveNodes)
 
         // Execute transactions
         start := time.Now()
@@ -98,8 +105,8 @@ func (r *Runner) RunAllTestSets() {
 
         log.Printf("[Runner] Total time elapsed %v",end)
         
-        // r.showInteractiveMenu()
-        r.PrintStatusAll()
+        r.showInteractiveMenu()
+        // r.PrintStatusAll()
     }
 
     log.Printf("All test sets complete")
@@ -159,6 +166,88 @@ func (r *Runner) ExecuteTestCase(tc TestCase, clients map[string]*Client) {
     log.Printf("[Runner] Finished all transactions for Set %d.", tc.SetNumber)
 }
 
+
+
+func (r *Runner) showInteractiveMenu() {
+    reader := bufio.NewReader(os.Stdin)
+    
+    for {
+        fmt.Println("\n========================================")
+        fmt.Println("         INTERACTIVE MENU")
+        fmt.Println("========================================")
+        // fmt.Println("1. PrintLog")
+        // fmt.Println("2. PrintDB ")
+        // fmt.Println("3. PrintStatus (single sequence number)")
+        fmt.Println("4. PrintStatus (all sequence numbers)")
+        // fmt.Println("5. PrintView")
+        // fmt.Println("6. Stop clients")
+        // fmt.Println("7. Stop server timers")
+        // fmt.Println("8. View client side replies")
+        fmt.Println("9. Proceed to next batch")
+        fmt.Println("========================================")
+        fmt.Print("Enter choice (1-9): ")
+
+        input, _ := reader.ReadString('\n')
+        input = strings.TrimSpace(input)
+
+        switch input {
+        // case "1":
+        //     r.PrintLogsForAllNodes()
+        // case "2":
+        //     r.PrintDBForAllNodes()
+        // case "3":
+        //     fmt.Print("Enter sequence number: ")
+        //     seqInput, _ := reader.ReadString('\n')
+        //     seqInput = strings.TrimSpace(seqInput)
+        //     seqNum, err := strconv.Atoi(seqInput)
+        //     if err != nil {
+        //         fmt.Printf("Invalid sequence number %d",seqNum)
+        //         continue
+        //     }
+        //     r.PrintStatusForSequence(int32(seqNum))
+        case "4":
+            r.PrintStatusAll()
+        // case "5":
+        //     r.PrintViewForAllNodes()
+        // case "6":
+        //     r.StopAllClients()
+        // case "7":
+        //     r.StopAllNodeTimers()
+        // case "8":
+        //     r.PrintClientReplyHistory()
+        case "9":
+            fmt.Println("\nProceeding to next batch...")
+            return
+
+        default:
+            fmt.Println("Invalid choice. Please enter 1-9.")
+        }
+    }
+}
+
+func (r *Runner) UpdateActiveNodes(liveNodes []int) {
+    for _, cfg := range r.nodeConfigs {
+        client, exists := r.nodeClients[int32(cfg.NodeId)]
+        if !exists {
+            log.Printf("[Runner] No connection to node %d", cfg.NodeId)
+            continue
+        }
+
+        if slices.Contains(liveNodes, int(cfg.NodeId)) {
+            _, err := client.RecoverNode(context.Background(),  &emptypb.Empty{})
+
+            if err != nil {
+                log.Printf("[Runner] Failed to send RECOVER signal for node %d: %v", cfg.NodeId, err)
+            }
+        } else {
+            _, err := client.FailNode(context.Background(),  &emptypb.Empty{})
+
+            if err != nil {
+                log.Printf("[Runner] Failed to send FAIL signal for node %d: %v", cfg.NodeId, err)
+            }
+        }
+    }
+}
 
 func (r *Runner) PrintStatusAll() {
     for _, nodeCfg := range getNodeCluster() {

@@ -74,6 +74,8 @@ message NewViewMessage {
   BallotNumber Ballot = 1;
   repeated AcceptedMessage AcceptLog = 2;
   int32 NodeId = 3;
+  int32 MinSeq = 4;
+  int32 MaxSeq = 5;
 }
 
 service MessageService {

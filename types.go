@@ -19,6 +19,7 @@ type Transaction struct{
 }
 
 type TestTransaction struct {
+	IsLeaderFailure bool   // "LF command"
 	Sender  string 
 	Receiver string 
 	Amount  int  

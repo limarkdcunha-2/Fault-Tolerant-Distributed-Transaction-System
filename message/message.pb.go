@@ -568,6 +568,8 @@ type NewViewMessage struct {
 	Ballot        *BallotNumber          `protobuf:"bytes,1,opt,name=Ballot,proto3" json:"Ballot,omitempty"`
 	AcceptLog     []*AcceptedMessage     `protobuf:"bytes,2,rep,name=AcceptLog,proto3" json:"AcceptLog,omitempty"`
 	NodeId        int32                  `protobuf:"varint,3,opt,name=NodeId,proto3" json:"NodeId,omitempty"`
+	MinSeq        int32                  `protobuf:"varint,4,opt,name=MinSeq,proto3" json:"MinSeq,omitempty"`
+	MaxSeq        int32                  `protobuf:"varint,5,opt,name=MaxSeq,proto3" json:"MaxSeq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -623,6 +625,20 @@ func (x *NewViewMessage) GetNodeId() int32 {
 	return 0
 }
 
+func (x *NewViewMessage) GetMinSeq() int32 {
+	if x != nil {
+		return x.MinSeq
+	}
+	return 0
+}
+
+func (x *NewViewMessage) GetMaxSeq() int32 {
+	if x != nil {
+		return x.MaxSeq
+	}
+	return 0
+}
+
 var File_message_message_proto protoreflect.FileDescriptor
 
 const file_message_message_proto_rawDesc = "" +
@@ -662,11 +678,13 @@ const file_message_message_proto_rawDesc = "" +
 	"\x0ePromiseMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x126\n" +
 	"\tAcceptLog\x18\x02 \x03(\v2\x18.message.AcceptedMessageR\tAcceptLog\x12\x16\n" +
-	"\x06NodeId\x18\x03 \x01(\x05R\x06NodeId\"\x8f\x01\n" +
+	"\x06NodeId\x18\x03 \x01(\x05R\x06NodeId\"\xbf\x01\n" +
 	"\x0eNewViewMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x126\n" +
 	"\tAcceptLog\x18\x02 \x03(\v2\x18.message.AcceptedMessageR\tAcceptLog\x12\x16\n" +
-	"\x06NodeId\x18\x03 \x01(\x05R\x06NodeId2\x9d\x05\n" +
+	"\x06NodeId\x18\x03 \x01(\x05R\x06NodeId\x12\x16\n" +
+	"\x06MinSeq\x18\x04 \x01(\x05R\x06MinSeq\x12\x16\n" +
+	"\x06MaxSeq\x18\x05 \x01(\x05R\x06MaxSeq2\x9d\x05\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +

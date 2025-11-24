@@ -17,6 +17,7 @@ func(node *Node) onLivenessTimerExpired(){
 	log.Printf("[Node %d] Livness timer expired",node.nodeId)
 	node.muLeader.Lock()
 	node.isLeaderKnown = false
+	log.Printf("[Node %d] isLeaderKnown=%v FIRST",node.nodeId,node.isLeaderKnown)
 	node.muLeader.Unlock()
 
 	// 1. Need to wait here until it expires
@@ -74,6 +75,8 @@ func(node *Node) onLivenessTimerExpired(){
 	node.muLeader.RLock()
 	isLeaderKnown := node.isLeaderKnown
 	node.muLeader.RUnlock()
+
+	log.Printf("[Node %d] isLeaderKnown=%v SECOND",node.nodeId,isLeaderKnown)
 
 	if !isLeaderKnown {
 		// If leader not known yet send prepare message to trigger leader election

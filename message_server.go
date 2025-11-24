@@ -66,7 +66,7 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 }
 
 func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
-		// 2. Check if already processed this request before
+	// 2. Check if already processed this request before
 	if cachedReply, exists := node.GetCachedReply(req.ClientId, req.Timestamp); exists {
 		log.Printf("[Node %d] Duplicate request from client %d (ts=%s). Returning cached reply.",
 			node.nodeId, req.ClientId, req.Timestamp.AsTime())
@@ -77,7 +77,7 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 
 	// 3. Check pending requests (assigned seq but not executed)
     if isPending := node.checkIfPending(req.ClientId, req.Timestamp); isPending {
-        log.Printf("Node %d: Duplicate (pending) from client %d - ignoring retry",
+        log.Printf("[Node %d]: Duplicate (pending) from client %d - ignoring retry",
             node.nodeId, req.ClientId)
         return
     }
@@ -98,8 +98,17 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 
 	// 5. Assign seq number
 	node.muLog.Lock()
+	seq := node.currentSeqNo + 1
+	
+	if _, exists := node.acceptLog[seq]; exists {
+		node.muLog.Unlock()
+		log.Printf("[Node %d] CRITICAL: Sequence number %d already occupied!", node.nodeId, seq)
+		return 
+	}
+
+	// Only increment if it is safe to increment
 	node.currentSeqNo++
-	seq := node.currentSeqNo
+
 	node.muLog.Unlock()
 
 	log.Printf("[Node %d] Assigning seq=%d to request (%s, %s, %d)",
@@ -132,10 +141,9 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 		Request: acceptMessage.Request,
 		AcceptedMessages: acceptedMessages,
 		AcceptCount: acceptCount,
-		Phase: PhaseNone,
+		Phase: PhaseAccepted,
 	}
 
-	
 	node.muLog.Lock()
 	node.acceptLog[acceptMessage.SequenceNum] = newEntry;
 	node.muLog.Unlock()
@@ -295,6 +303,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 }
 
 func(node *Node) sendAcceptedMessage(msg *pb.AcceptedMessage){
+	log.Printf("[Node %d] Sending ACCEPTED for Ballot (R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
 	targetId := msg.Ballot.NodeId
 
 	_, err := node.peers[targetId].HandleAccepted(context.Background(),msg)
@@ -316,6 +325,11 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	node.muLog.Lock()
 
+	log.Printf("[Node %d] is accept log nil=%v",node.nodeId,node.acceptLog == nil)
+	if node.acceptLog != nil {
+		log.Printf("[Node %d] is accept log len=%d",node.nodeId,len(node.acceptLog))
+	}
+
 	entry, exists := node.acceptLog[msg.SequenceNum]
 
 	// 1. Retrieve the log entry for this sequence number (created during PrePrepare)
@@ -325,24 +339,33 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 		return &emptypb.Empty{}, nil
 	}
 
+	log.Printf("[Node %d] Entry exists",node.nodeId)
+
 	entry.mu.Lock()
 	node.muLog.Unlock()
 
 	// 2. Check if valid ballot number 
-	if entry.Ballot.NodeId != msg.Ballot.NodeId || entry.Ballot.RoundNumber != msg.Ballot.RoundNumber {
+	if !node.isBallotEqual(entry.Ballot,msg.Ballot) {
 		log.Printf("[Node %d] REJECTED ACCEPTED: Ballot mismatch for (R:%d, S:%d).",
 			node.nodeId, msg.Ballot.RoundNumber, msg.SequenceNum)
+		log.Printf("[Node %d] Entry ballot (R:%d,N:%d) msg ballot (R:%d,N:%d)",
+		node.nodeId,entry.Ballot.RoundNumber,entry.Ballot.NodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+		
 		entry.mu.Unlock()
 		return &emptypb.Empty{}, nil
 	}
+	
+	log.Printf("[Node %d] Ballot check complete",node.nodeId)
 
 	// 3. Quorum already reached so no need for new message
-	if entry.Phase >= PhaseAccepted {
+	if entry.Phase >= PhaseCommitted {
         log.Printf("[Node %d] Ignoring ACCEPTED for (R:%d, S:%d), already in Phase %v",
             node.nodeId, entry.Ballot.RoundNumber, entry.SequenceNum, entry.Phase)
        	entry.mu.Unlock()
         return &emptypb.Empty{}, nil
     }
+
+	log.Printf("[Node %d] Quorum reach check complete",node.nodeId)
 
 	// 4. Check if already counted message from this node
 	if _, exists := entry.AcceptedMessages[msg.NodeId]; exists {
@@ -351,7 +374,10 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 		return &emptypb.Empty{}, nil
 	}
 
+	log.Printf("[Node %d] All checks completed",node.nodeId)
+
 	entry.AcceptedMessages[msg.NodeId] = msg
+	log.Printf("[Node %d] Inserted accepted msg",node.nodeId)
 	entry.AcceptCount = int32(len(entry.AcceptedMessages))
 	log.Printf("[Node %d] Accepted Count: %d",node.nodeId,entry.AcceptCount)
 
@@ -501,6 +527,12 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 	
 		log.Printf("[Entry while in execution] AcceptCount: %d, phase=%v",entry.AcceptCount,entry.Phase)
 
+		if entry.Phase == PhaseExecuted {
+			log.Printf("[Node %d] Running execution phase=%v already executed for seq=%d",node.nodeId,entry.Phase,nextSeq)
+            entry.mu.Unlock()
+            continue
+        }
+
 		if entry.Phase != PhaseCommitted {
 			log.Printf("[Node %d] Running execution phase=%v is not committed for seq=%d",node.nodeId,entry.Phase,nextSeq)
             entry.mu.Unlock()
@@ -508,10 +540,9 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
         }
 
 		// IF NO-OP
-		if entry.Request.ClientId == -1 {
+		if entry.Request.Transaction.Sender == "noop" {
 			log.Printf("[Node %d] EXECUTED NO-OP Seq=%d.", node.nodeId, nextSeq)
 		} else {
-
 			_, exists = node.GetCachedReply(entry.Request.ClientId, entry.Request.Timestamp)
 
 			// Non executed new request
@@ -593,6 +624,7 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 
 
 func(node *Node) sendReplyToClient(reply *pb.ReplyMessage){
+	log.Printf("[Node %d] Sending REPLY back to client",node.nodeId)
 	grpcClient, _ := node.getConnForClient(reply.ClientId)
 
 	grpcClient.HandleReply(context.Background(),reply)
@@ -679,21 +711,21 @@ func (node *Node) getAcceptedLogForPromise() []*pb.AcceptedMessage {
     var acceptedEntries []*pb.AcceptedMessage
 
     for _, entry := range node.acceptLog {
-        if entry.Phase == PhaseAccepted {
-            amsg := &pb.AcceptedMessage{
+        if entry.Phase >= PhaseAccepted {
+            msg := &pb.AcceptedMessage{
                 Ballot:      entry.Ballot,
                 SequenceNum: entry.SequenceNum,
                 Request:     entry.Request,
                 NodeId:      node.nodeId,
             }
-            acceptedEntries = append(acceptedEntries, amsg)
+            acceptedEntries = append(acceptedEntries, msg)
         }
     }
     return acceptedEntries
 }
 
 func(node *Node) sendPromiseMessage(msg *pb.PromiseMessage){
-	log.Printf("[Node %d] Sending PROMISE to %d",node.nodeId,msg.Ballot.NodeId)
+	log.Printf("[Node %d] Sending PROMISE to %d with log len=%d",node.nodeId,msg.Ballot.NodeId,len(msg.AcceptLog))
 
 	peerClient, ok := node.peers[msg.Ballot.NodeId]
 	if !ok {
@@ -724,7 +756,6 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 	selfBallot := node.promisedBallotPrepare
 	node.muBallot.RUnlock()
 
-	
 	if !node.isBallotEqual(msg.Ballot,selfBallot){
 		log.Printf("[Node %d] Rejecting PROMISE with different ballot",node.nodeId)
 		return &emptypb.Empty{},nil
@@ -762,14 +793,15 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.promiseLog.isPromiseQuorumReached = true
 
 		// 4a Build merged accept log from promises
-		mergedLog := node.buildMergedAcceptLog()
+		mergedLog,minSeq,maxSeq := node.buildMergedAcceptLog()
 
 		node.muProLog.Unlock()
 
 		// 4b. Update self ballot number
 		node.muBallot.Lock()
-		node.promisedBallotAccept = node.promisedBallotPrepare
-		node.myBallot = node.promisedBallotPrepare
+		// node.promisedBallotPrepare = msg.Ballot
+		node.promisedBallotAccept = msg.Ballot
+		node.myBallot = msg.Ballot
 		node.muBallot.Unlock()
 
 		// 4c. Updated election state pointers
@@ -779,18 +811,25 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.muLeader.Unlock()
 
 		// 4d. Install new log unto self
-		node.installMergedAcceptLog(mergedLog)
+		node.installMergedAcceptLog(mergedLog,msg.Ballot,minSeq,maxSeq,true)
 
 		// 4e. Broadcast new view
 		newViewMsg := &pb.NewViewMessage{
-			Ballot: selfBallot,
+			Ballot: msg.Ballot,
 			AcceptLog: mergedLog,
 			NodeId: node.nodeId,
+			MinSeq: minSeq,
+			MaxSeq: maxSeq,
 		}
 
 		go node.broadcastNewView(newViewMsg)
 
-		// 4f. Start draining pending requests queue
+		// 4f. Reset the pending cause role has been changed from follower to leader
+		node.muPending.Lock()
+		node.pendingRequests = make(map[string]bool)
+		node.muPending.Unlock()
+
+		// 4g. Start draining pending requests queue
 		node.drainQueuedRequests(node.nodeId)
 
 		return &emptypb.Empty{},nil
@@ -801,7 +840,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 }
 
 // Lock for promise log has been held in parent
-func(node *Node) buildMergedAcceptLog() []*pb.AcceptedMessage {
+func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32) {
 	// update minS with checkpointing interval
 	var minS int32 = 1
     var maxSeq int32 = 0
@@ -845,50 +884,85 @@ func(node *Node) buildMergedAcceptLog() []*pb.AcceptedMessage {
         mergedSlice[seq-1] = merged[seq]
     }
 
-    return mergedSlice
+    return mergedSlice,minS,maxSeq
 }
 
-func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage) {
+func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winningBallot *pb.BallotNumber,minSeq int32,maxSeq int32,isLeader bool) {
 	node.muLog.Lock()
-    defer node.muLog.Unlock()
-
-	maxSeq := int32(len(mergedLog))
-
+    
 	for _, acceptedMsg := range mergedLog {
 		seq := acceptedMsg.SequenceNum
-        if seq > maxSeq {
-            maxSeq = seq
-        }
-
 		entry, exists := node.acceptLog[seq]
 
 		if !exists {
+			selfAcceptedMessage := &pb.AcceptedMessage{
+				Ballot: winningBallot,
+				SequenceNum: seq,
+				Request: acceptedMsg.Request,
+				NodeId: node.nodeId,
+			}
+
+			newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
+			newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
+
             node.acceptLog[seq] = &LogEntry{
                 SequenceNum: seq,
-                Ballot:      acceptedMsg.Ballot,
+                Ballot:      winningBallot,
                 Request:     acceptedMsg.Request,
                 Phase:       PhaseAccepted,
+				AcceptedMessages:newAcceptMsgLog,
+				AcceptCount:1,
             }
         } else {
 			entry.mu.Lock()
 
-			if node.isBallotGreaterThan(acceptedMsg.Ballot,entry.Ballot){
-				entry.Ballot = acceptedMsg.Ballot
+			if node.isBallotGreaterThan(winningBallot,entry.Ballot){
+				log.Printf("[Node %d] Updating ballot in seq=%d to (R:%d,N:%d)",node.nodeId,seq,winningBallot.RoundNumber,winningBallot.NodeId)
+				entry.Ballot = winningBallot
 			}
-			entry.Phase = PhaseAccepted
+			
+			if isLeader {
+				selfAcceptedMessage := &pb.AcceptedMessage{
+					Ballot: entry.Ballot,
+					SequenceNum: seq,
+					Request: acceptedMsg.Request,
+					NodeId: node.nodeId,
+				}
 
+				newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
+				newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
+
+				entry.Phase = PhaseAccepted
+				entry.AcceptedMessages = newAcceptMsgLog
+				entry.AcceptCount = 1
+			} 
+			
 			entry.mu.Unlock()
 		}
 	}
 
-	// Clear any acceptLog entries beyond maxSeq to remove stale data
-	for seq := range node.acceptLog {
-        if seq > maxSeq {
-            delete(node.acceptLog, seq)
-        }
-    }
+	if maxSeq - minSeq +1 > int32(len(node.acceptLog)) {
+		//  for _, entry := range node.acceptLog {
+		// Clear any acceptLog entries beyond maxSeq to remove stale data
+		for seq := range node.acceptLog {
+			log.Printf("[Node %d] Attempting delete at seq=%d",node.nodeId,seq)
+			if seq > maxSeq {
+				log.Printf("[Node %d] Deleted at seq=%d",node.nodeId,seq)
+				delete(node.acceptLog, seq)
+			}
+		}
+	}
 
-	log.Printf("[Node %d] installMergedAcceptLog complete: maxSeq=%d, cleared entries beyond max", node.nodeId, maxSeq)
+	node.currentSeqNo = maxSeq
+	node.muLog.Unlock()
+
+	if isLeader {
+		node.muExec.Lock()
+		node.lastExecSeqNo = minSeq-1
+		node.muExec.Unlock()
+	}
+	
+	log.Printf("[Node %d] installMergedAcceptLog complete: minSeq=%d maxSeq=%d, cleared entries beyond max", node.nodeId,minSeq, maxSeq)
 }
 
 func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
@@ -977,13 +1051,41 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 	node.inLeaderElection = false
 	node.muLeader.Unlock()
 
-	// 3. Install log
-	node.installMergedAcceptLog(msg.AcceptLog)
+	node.muPreLog.Lock()
+	node.prepareLog = PrepareLog{
+		log: make([]*pb.PrepareMessage,0),
+		highestBallotPrepare: nil,
+	}
+	node.muPreLog.Unlock()
 
-	// TO DO 4. Send accepted back for each entry
-	
+	// 3. Install log
+	node.installMergedAcceptLog(msg.AcceptLog,msg.Ballot,msg.MinSeq,msg.MaxSeq,false)
+
+	// 4. Send accepted back for each entry
+	node.sendBackAcceptedForEntireMergedLog(msg)
 
 	return &emptypb.Empty{},nil
+}
+
+func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage){
+	log.Printf("[Node %d] Sending ACCEPTED (entire ballot) back for ballot(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+	node.muLog.RLock()
+	defer node.muLog.RUnlock()
+
+	for _, entry := range node.acceptLog {
+		entry.mu.Lock()
+
+		acceptedMsg := &pb.AcceptedMessage{
+			Ballot:      entry.Ballot,     
+			SequenceNum: entry.SequenceNum,
+			Request:     entry.Request,  
+			NodeId:      node.nodeId,
+		}
+
+		entry.mu.Unlock()
+
+		go node.sendAcceptedMessage(acceptedMsg)
+	}
 }
 
 

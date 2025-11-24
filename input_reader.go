@@ -18,97 +18,88 @@ import (
 
 
 func parseTestCases(filePath string) (map[int]TestCase, error) {
-    file, err := os.Open(filePath)
-    if err != nil {
-        return nil, fmt.Errorf("could not open csv file: %w", err)
-    }
-    defer file.Close()
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("could not open csv file: %w", err)
+	}
+	defer file.Close()
 
-    reader := csv.NewReader(file)
-    // Skip the header row
-    if _, err := reader.Read(); err != nil {
-        return nil, fmt.Errorf("could not read header: %w", err)
-    }
+	reader := csv.NewReader(file)
+	// Skip the header row
+	if _, err := reader.Read(); err != nil {
+		return nil, fmt.Errorf("could not read header: %w", err)
+	}
 
-    testCases := make(map[int]TestCase)
-    var currentTestCase *TestCase
+	testCases := make(map[int]TestCase)
+	var currentTestCase *TestCase
 
-    // Regex for normal transactions "(A, B, 3)"
-    txRegex := regexp.MustCompile(`\((\w+),\s*(\w+),\s*(\d+)\)`)
-    // Regex for read-only transactions "(A)"
-    readOnlyRegex := regexp.MustCompile(`\((\w+)\)`)
-    // Regex for live nodes "[n1, n2, n3]"
-    nodeRegex := regexp.MustCompile(`n(\d+)`)
+	// Regex to parse transactions like "(A, J, 3)" and node lists like "[n1, n2, n3]"
+	txRegex := regexp.MustCompile(`\((?P<sender>\w+),\s*(?P<receiver>\w+),\s*(?P<amount>\d+)\)`)
+	nodeRegex := regexp.MustCompile(`n(\d+)`)
 
-    for {
-        record, err := reader.Read()
-        if err == io.EOF {
-            break
-        }
-        if err != nil {
-            return nil, fmt.Errorf("error reading csv record: %w", err)
-        }
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("error reading csv record: %w", err)
+		}
 
-        // --- Column 0: Set Number ---
-        if record[0] != "" {
-            // Add previous test case before starting a new one
-            if currentTestCase != nil {
-                testCases[currentTestCase.SetNumber] = *currentTestCase
-            }
+		// Column 0: Set Number
+		if record[0] != "" {
+			// If we are starting a new test case, add the previous one to the map.
+			if currentTestCase != nil {
+				testCases[currentTestCase.SetNumber] = *currentTestCase
+			}
 
-            setNum, _ := strconv.Atoi(record[0])
-            currentTestCase = &TestCase{
-                SetNumber:    setNum,
-            }
+			setNum, _ := strconv.Atoi(record[0])
+			currentTestCase = &TestCase{SetNumber: setNum}
 
-            // Parse live nodes (column 2)
-            if len(record) > 2 && record[2] != "" {
-                matches := nodeRegex.FindAllStringSubmatch(record[2], -1)
-                for _, match := range matches {
-                    nodeID, _ := strconv.Atoi(match[1])
-                    currentTestCase.LiveNodes = append(currentTestCase.LiveNodes, nodeID)
-                }
-            }
-        }
+			// Column 2: Live Nodes (only present on the first line of a set)
+			if record[2] != "" {
+				matches := nodeRegex.FindAllStringSubmatch(record[2], -1)
+				for _, match := range matches {
+					nodeID, _ := strconv.Atoi(match[1])
+					currentTestCase.LiveNodes = append(currentTestCase.LiveNodes, nodeID)
+				}
+			}
+		}
 
-        // --- Column 1: Transactions ---
-        if currentTestCase != nil && len(record) > 1 && record[1] != "" {
-            txStr := strings.TrimSpace(record[1])
+		// Column 1: Transactions
+		if currentTestCase != nil && record[1] != "" {
+			txStr := strings.TrimSpace(record[1])
+			if txStr == "LF" {
+				// Handle Leader Failure command
+				currentTestCase.Transactions = append(currentTestCase.Transactions, TestTransaction{IsLeaderFailure: true})
+			} else {
+				// Handle regular transaction
+				matches := txRegex.FindStringSubmatch(txStr)
+				if len(matches) == 4 { // 0: full match, 1: sender, 2: receiver, 3: amount
+					amount, _ := strconv.Atoi(matches[3])
+					tx := TestTransaction{
+						Sender:   matches[1],
+						Receiver: matches[2],
+						Amount:   amount,
+					}
+					currentTestCase.Transactions = append(currentTestCase.Transactions, tx)
+				}
+			}
+		}
+	}
 
-            switch {
-            case txRegex.MatchString(txStr):
-                // Normal transaction (A, B, 3)
-                m := txRegex.FindStringSubmatch(txStr)
-                amount, _ := strconv.Atoi(m[3])
-                currentTestCase.Transactions = append(currentTestCase.Transactions, TestTransaction{
-                    Sender:   m[1],
-                    Receiver: m[2],
-                    Amount:   amount,
-                })
+	// Add the last test case to the map
+	if currentTestCase != nil {
+		testCases[currentTestCase.SetNumber] = *currentTestCase
+	}
 
-            case readOnlyRegex.MatchString(txStr):
-                // Read-only transaction (A)
-                m := readOnlyRegex.FindStringSubmatch(txStr)
-                currentTestCase.Transactions = append(currentTestCase.Transactions, TestTransaction{
-                    Sender:   m[1],
-                    Receiver: m[1],
-                    Amount:   0,
-                })
-            }
-        }
-    }
-
-    // Add last test case
-    if currentTestCase != nil {
-        testCases[currentTestCase.SetNumber] = *currentTestCase
-    }
-
-    return testCases, nil
+	return testCases, nil
 }
 
 
 func getAllTestCases() map[int]TestCase {
-	filePath := "test1.csv"
+	// filePath := "test1.csv"
+    filePath := "CSE535-F25-Project-1-Testcases.csv"
     
 	log.Printf("Parsing test cases from: %s\n", filePath)
 

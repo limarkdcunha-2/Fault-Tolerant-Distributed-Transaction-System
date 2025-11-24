@@ -19,6 +19,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+type NodeStatus int
+
+const (
+    NodeActive NodeStatus = iota
+    NodeInactive
+    NodeCrashed
+)
+
 type Phase int
 
 const (
@@ -95,6 +103,10 @@ type Node struct {
 
 	muProLog sync.RWMutex
 	promiseLog PromiseLog
+
+	// Project helpers
+	muStatus sync.RWMutex
+    status   NodeStatus
 
 	peers map[int32]pb.MessageServiceClient
 

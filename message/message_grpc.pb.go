@@ -36,6 +36,8 @@ const (
 	MessageService_HandlePromise_FullMethodName      = "/message.MessageService/HandlePromise"
 	MessageService_HandleNewView_FullMethodName      = "/message.MessageService/HandleNewView"
 	MessageService_PrintAcceptLog_FullMethodName     = "/message.MessageService/PrintAcceptLog"
+	MessageService_FailNode_FullMethodName           = "/message.MessageService/FailNode"
+	MessageService_RecoverNode_FullMethodName        = "/message.MessageService/RecoverNode"
 )
 
 // MessageServiceClient is the client API for MessageService service.
@@ -49,7 +51,10 @@ type MessageServiceClient interface {
 	HandlePrepare(ctx context.Context, in *PrepareMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandlePromise(ctx context.Context, in *PromiseMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleNewView(ctx context.Context, in *NewViewMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// Project helpers
 	PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	FailNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RecoverNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type messageServiceClient struct {
@@ -140,6 +145,26 @@ func (c *messageServiceClient) PrintAcceptLog(ctx context.Context, in *emptypb.E
 	return out, nil
 }
 
+func (c *messageServiceClient) FailNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_FailNode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) RecoverNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_RecoverNode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MessageServiceServer is the server API for MessageService service.
 // All implementations must embed UnimplementedMessageServiceServer
 // for forward compatibility.
@@ -151,7 +176,10 @@ type MessageServiceServer interface {
 	HandlePrepare(context.Context, *PrepareMessage) (*emptypb.Empty, error)
 	HandlePromise(context.Context, *PromiseMessage) (*emptypb.Empty, error)
 	HandleNewView(context.Context, *NewViewMessage) (*emptypb.Empty, error)
+	// Project helpers
 	PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	FailNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	RecoverNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	mustEmbedUnimplementedMessageServiceServer()
 }
 
@@ -185,6 +213,12 @@ func (UnimplementedMessageServiceServer) HandleNewView(context.Context, *NewView
 }
 func (UnimplementedMessageServiceServer) PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintAcceptLog not implemented")
+}
+func (UnimplementedMessageServiceServer) FailNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method FailNode not implemented")
+}
+func (UnimplementedMessageServiceServer) RecoverNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RecoverNode not implemented")
 }
 func (UnimplementedMessageServiceServer) mustEmbedUnimplementedMessageServiceServer() {}
 func (UnimplementedMessageServiceServer) testEmbeddedByValue()                        {}
@@ -351,6 +385,42 @@ func _MessageService_PrintAcceptLog_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_FailNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).FailNode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_FailNode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).FailNode(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_RecoverNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).RecoverNode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_RecoverNode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).RecoverNode(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MessageService_ServiceDesc is the grpc.ServiceDesc for MessageService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -389,6 +459,14 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PrintAcceptLog",
 			Handler:    _MessageService_PrintAcceptLog_Handler,
+		},
+		{
+			MethodName: "FailNode",
+			Handler:    _MessageService_FailNode_Handler,
+		},
+		{
+			MethodName: "RecoverNode",
+			Handler:    _MessageService_RecoverNode_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

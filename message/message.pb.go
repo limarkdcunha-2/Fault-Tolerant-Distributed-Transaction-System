@@ -666,7 +666,7 @@ const file_message_message_proto_rawDesc = "" +
 	"\x0eNewViewMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x126\n" +
 	"\tAcceptLog\x18\x02 \x03(\v2\x18.message.AcceptedMessageR\tAcceptLog\x12\x16\n" +
-	"\x06NodeId\x18\x03 \x01(\x05R\x06NodeId2\xa2\x04\n" +
+	"\x06NodeId\x18\x03 \x01(\x05R\x06NodeId2\x9d\x05\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +
@@ -675,7 +675,9 @@ const file_message_message_proto_rawDesc = "" +
 	"\rHandlePrepare\x12\x17.message.PrepareMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
 	"\rHandlePromise\x12\x17.message.PromiseMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
 	"\rHandleNewView\x12\x17.message.NewViewMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
-	"\x0ePrintAcceptLog\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty2M\n" +
+	"\x0ePrintAcceptLog\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12:\n" +
+	"\bFailNode\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12=\n" +
+	"\vRecoverNode\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty2M\n" +
 	"\rClientService\x12<\n" +
 	"\vHandleReply\x12\x15.message.ReplyMessage\x1a\x16.google.protobuf.EmptyB\x1fZ\x1dtransaction-processor/messageb\x06proto3"
 
@@ -730,18 +732,22 @@ var file_message_message_proto_depIdxs = []int32{
 	8,  // 20: message.MessageService.HandlePromise:input_type -> message.PromiseMessage
 	9,  // 21: message.MessageService.HandleNewView:input_type -> message.NewViewMessage
 	11, // 22: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
-	6,  // 23: message.ClientService.HandleReply:input_type -> message.ReplyMessage
-	11, // 24: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
-	11, // 25: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
-	11, // 26: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
-	11, // 27: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
-	11, // 28: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
-	11, // 29: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
-	11, // 30: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
-	11, // 31: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
-	11, // 32: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
-	24, // [24:33] is the sub-list for method output_type
-	15, // [15:24] is the sub-list for method input_type
+	11, // 23: message.MessageService.FailNode:input_type -> google.protobuf.Empty
+	11, // 24: message.MessageService.RecoverNode:input_type -> google.protobuf.Empty
+	6,  // 25: message.ClientService.HandleReply:input_type -> message.ReplyMessage
+	11, // 26: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
+	11, // 27: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
+	11, // 28: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
+	11, // 29: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
+	11, // 30: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
+	11, // 31: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
+	11, // 32: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
+	11, // 33: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
+	11, // 34: message.MessageService.FailNode:output_type -> google.protobuf.Empty
+	11, // 35: message.MessageService.RecoverNode:output_type -> google.protobuf.Empty
+	11, // 36: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
+	26, // [26:37] is the sub-list for method output_type
+	15, // [15:26] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name

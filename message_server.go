@@ -14,10 +14,10 @@ import (
 )
 
 func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest) (*emptypb.Empty, error) {
-	// if !localNode.IsActive() {
-	// 	log.Printf("Node is inactive. Dropping REQUEST message.")
-    //     return nil, errors.New("node inactive")
-    // }
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive. Dropping REQUEST message",node.nodeId)
+        return &emptypb.Empty{}, nil
+    }
 
 	log.Printf("[Node %d] Received client request from Client %d (ts=%s) [Sender=%s, Receiver=%s, Amount=%d]",
         node.nodeId, req.ClientId, req.Timestamp.AsTime(),
@@ -175,10 +175,10 @@ func (node *Node) broadcastAcceptMessage(msg *pb.AcceptMessage){
 
 
 func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*emptypb.Empty, error) {
-	// if !node.IsActive() {
-    //     log.Printf("[Node %d] is inactive. Dropping ACCEPT message",node.nodeId)
-    //     return &emptypb.Empty{}, nil
-    // }
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive. Dropping ACCEPT message for seq=%d",node.nodeId,msg.SequenceNum)
+        return &emptypb.Empty{}, nil
+    }
 
 	log.Printf("[Node] Received ACCEPT: ballot=%d, seq=%d from leader=%d",
 		msg.Ballot.RoundNumber, msg.SequenceNum,msg.Ballot.NodeId)
@@ -306,6 +306,11 @@ func(node *Node) sendAcceptedMessage(msg *pb.AcceptedMessage){
 }
 
 func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*emptypb.Empty, error) {
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive. Dropping ACCEPTED message for seq=%d",node.nodeId,msg.SequenceNum)
+        return &emptypb.Empty{}, nil
+    }
+
 	log.Printf("[Node %d] [ACCEPTED] Received from Node %d | Seq=%d  | ballot round=%d",
 		node.nodeId,msg.NodeId, msg.SequenceNum,msg.Ballot.RoundNumber)
 
@@ -409,6 +414,11 @@ func(node *Node) broadcastCommitMessage(msg *pb.CommitMessage){
 
 
 func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*emptypb.Empty, error) {
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive. Dropping COMMIT message for seq=%d",node.nodeId,msg.SequenceNum)
+        return &emptypb.Empty{}, nil
+    }
+
 	log.Printf("[Node %d] Received COMMIT message for seq=%d from %d",node.nodeId,msg.SequenceNum,msg.Ballot.NodeId)
 
 	// 1. Check for valid ballot number
@@ -590,6 +600,11 @@ func(node *Node) sendReplyToClient(reply *pb.ReplyMessage){
 
 
 func (node *Node) HandlePrepare(ctx context.Context, msg *pb.PrepareMessage) (*emptypb.Empty, error) {
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive. Dropping PREPARE message for Ballot=(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+        return &emptypb.Empty{}, nil
+    }
+
 	log.Printf("[Node %d] Received PREPARE from node=%d for round=%d",node.nodeId,msg.Ballot.NodeId,msg.Ballot.RoundNumber)
 
 	// 1. Check if prepare with valid ballot number
@@ -697,6 +712,11 @@ func(node *Node) sendPromiseMessage(msg *pb.PromiseMessage){
 
 
 func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emptypb.Empty, error) {
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive. Dropping PROMISE message for Ballot=(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+        return &emptypb.Empty{}, nil
+    }
+
 	log.Printf("[Node %d] Received PROMISE for Ballot (R:%d) from node=%d",node.nodeId,msg.Ballot.RoundNumber,msg.NodeId)
 
 	// 1. Valid ballot check
@@ -918,6 +938,11 @@ func(node *Node) drainQueuedRequests(leaderId int32){
 }
 
 func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emptypb.Empty, error) {
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive. Dropping NEW-VIEW message for Ballot=(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+        return &emptypb.Empty{}, nil
+    }
+
 	log.Printf("[Node %d] Received NEW-VIEW from node=%d for Round=%d",node.nodeId,msg.NodeId,msg.Ballot.RoundNumber)
 	
 	// 1. Check for ballot
@@ -965,5 +990,17 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 func (node *Node) PrintAcceptLog(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
 	node.PrintAcceptLogUtil()
 	
+	return &emptypb.Empty{},nil
+}
+
+func(node *Node) FailNode(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
+	node.Deactivate()
+
+	return &emptypb.Empty{},nil
+}
+
+func(node *Node) RecoverNode(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
+	node.Activate()
+
 	return &emptypb.Empty{},nil
 }

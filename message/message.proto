@@ -86,7 +86,10 @@ service MessageService {
   rpc HandlePromise(PromiseMessage) returns (google.protobuf.Empty);
   rpc HandleNewView(NewViewMessage) returns (google.protobuf.Empty);
 
+  // Project helpers
   rpc PrintAcceptLog(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc FailNode(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc RecoverNode(google.protobuf.Empty) returns (google.protobuf.Empty);
 }
 
 service ClientService {

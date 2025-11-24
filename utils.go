@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sort"
 )
 
@@ -44,6 +45,35 @@ func getAllNodeIDs() []int32 {
 		ids = append(ids, cfg.NodeId)
 	}
 	return ids
+}
+
+
+func (node *Node) Activate() {
+    node.muStatus.Lock()
+    defer node.muStatus.Unlock()
+    node.status = NodeActive
+    log.Printf("[Node %d] ACTIVATED", node.nodeId)
+}
+
+func (node *Node) Deactivate() {
+    node.muStatus.Lock()
+    defer node.muStatus.Unlock()
+    node.status = NodeInactive
+    log.Printf("[Node %d] DEACTIVATED", node.nodeId)
+
+    if node.livenessTimer.IsRunning(){
+        node.livenessTimer.Stop()
+    }
+
+    if node.prepareTimer.IsRunning(){
+        node.prepareTimer.Stop()
+    }
+}
+
+func (node *Node) isActive() bool {
+    node.muStatus.RLock()
+    defer node.muStatus.RUnlock()
+    return node.status == NodeActive
 }
 
 

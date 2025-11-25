@@ -234,7 +234,7 @@ func (node *Node) markRequestPending(clientId int32, timestamp *timestamppb.Time
     key := makeRequestKey(clientId, timestamp)
     node.pendingRequests[key] = true
     
-    log.Printf("Node %d: Marked request from client %d as PENDING", 
+    log.Printf("[Node %d] Marked request from client %d as PENDING", 
         node.nodeId, clientId)
 }
 

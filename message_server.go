@@ -919,6 +919,7 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 			if node.isBallotGreaterThan(winningBallot,entry.Ballot){
 				log.Printf("[Node %d] Updating ballot in seq=%d to (R:%d,N:%d)",node.nodeId,seq,winningBallot.RoundNumber,winningBallot.NodeId)
 				entry.Ballot = winningBallot
+				entry.Request = acceptedMsg.Request
 			}
 			
 			if isLeader {

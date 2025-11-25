@@ -157,9 +157,12 @@ func (client *Client) SendTransaction(tx Transaction) string {
 		result,ok := client.waitForReply(pending, 100*time.Millisecond)
 
 		if ok {
-			pending.mu.Lock()
+			pending.mu.Lock()	
 			client.updateLeaderFromReply(pending.reply)
 			pending.mu.Unlock()
+
+			log.Printf("[Client %d] Received result=%s for (%s, %s, %d)",
+			client.id,result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 			
 			return result
 		}
@@ -245,8 +248,6 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
 	}
 }
 
-
-// HandleReply
 
 func (client *Client) getRequestKey(timestamp *timestamppb.Timestamp) string {
     return fmt.Sprintf("%d-%d-%d", client.id, timestamp.Seconds, timestamp.Nanos)

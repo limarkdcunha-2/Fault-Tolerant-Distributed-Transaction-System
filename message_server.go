@@ -235,7 +235,8 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 
 			// If ballot number is higher then overrwrite in accept log and send accepted with new ballot number
 			if isBallotGreater {
-				existingEntry.Ballot =msg.Ballot
+				existingEntry.Ballot = msg.Ballot
+				existingEntry.Request = msg.Request
 
 				acceptedMessage := &pb.AcceptedMessage{
 					Ballot: existingEntry.Ballot,
@@ -453,7 +454,9 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 	node.muBallot.RUnlock()
 
 	if node.isBallotLessThan(msg.Ballot,selfBallot) {
-		log.Printf("[Node %d] Rejecting COMMIT message with stale ballot number (R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+		log.Printf("[Node %d] Rejecting COMMIT: stale ballot (R:%d,N:%d) < (R:%d,N:%d)",
+            node.nodeId, msg.Ballot.RoundNumber, msg.Ballot.NodeId,
+            selfBallot.RoundNumber, selfBallot.NodeId)
 		
 		return &emptypb.Empty{}, nil
 	}
@@ -487,6 +490,7 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 	entry.mu.Lock()
 	node.muLog.Unlock()
 	
+	// 3 Check if already COMMITTED
 	if entry.Phase >= PhaseCommitted {
 		log.Printf("[Node %d] INFO: Already committed/executed Seq=%d. Ignoring duplicate COMMIT.",
 			node.nodeId, msg.SequenceNum)
@@ -494,12 +498,24 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 		return &emptypb.Empty{}, nil
 	}
 
+	// 4 Check if request mistmatch (can happen in split brain scenario where dead leader recovers)
+	if msg.Request != nil && !node.requestsAreEqual(entry.Request, msg.Request) {
+        log.Printf("[Node %d] SAFETY ERROR: COMMIT request mismatch for seq=%d!",
+            node.nodeId, msg.SequenceNum)
+        entry.mu.Unlock()
+        return &emptypb.Empty{}, nil
+    }
+
+	// 5 Commit the entry
 	entry.Phase = PhaseCommitted
 	// Note this line is really critical for safety
-	entry.Ballot = msg.Ballot 
+	if node.isBallotGreaterThan(msg.Ballot, entry.Ballot) {
+        entry.Ballot = msg.Ballot
+    }
 	
 	entry.mu.Unlock()
 
+	// 6 Execute
 	go node.executeInOrder(false)
 
 	return &emptypb.Empty{}, nil
@@ -593,11 +609,11 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 
 				node.cacheReplyAndClearPending(reply)
 				
+				log.Printf("[Node %d] EXECUTED: Seq=%d successfully. Status=%s", node.nodeId, entry.SequenceNum, status)
+
 				if shouldSendReply {
 					go node.sendReplyToClient(reply)
 				}
-				
-				log.Printf("[Node %d] EXECUTED: Seq=%d successfully. Status=%s", node.nodeId, entry.SequenceNum, status)
 			}
 		}
 
@@ -825,9 +841,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		go node.broadcastNewView(newViewMsg)
 
 		// 4f. Reset the pending cause role has been changed from follower to leader
-		node.muPending.Lock()
-		node.pendingRequests = make(map[string]bool)
-		node.muPending.Unlock()
+		node.buildPendingRequestsQueue()
 
 		// 4g. Start draining pending requests queue
 		node.drainQueuedRequests(node.nodeId)
@@ -867,6 +881,7 @@ func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32) {
                 SequenceNum: seq,
                 Ballot:      node.promisedBallotPrepare,
                 Request: &pb.ClientRequest{
+					ClientId: -1,
                     Transaction: &pb.Transaction{
                         Sender:   "noop",
                         Receiver: "noop",
@@ -995,6 +1010,52 @@ func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
 	}
 }
 
+func (node *Node) buildPendingRequestsQueue(){
+	node.muLog.RLock()
+
+	logCopy := make(map[int32]*LogEntry, len(node.acceptLog))
+	for seq, entry := range node.acceptLog {
+		logCopy[seq] = entry
+	}
+
+	node.muLog.RUnlock()
+
+	pendingRequests := make(map[string]bool)
+
+	for _, entry := range logCopy {
+		// log.Printf("[Node %d] [PendingQueue] ... seq=%d has NULL digest. Skipping.",node.nodeId,)
+		entry.mu.Lock()
+
+		SequenceNum := entry.SequenceNum
+		ClientId := entry.Request.ClientId
+		Timestamp := entry.Request.Timestamp
+		
+		entry.mu.Unlock()
+
+		if ClientId == -1 {
+			log.Printf("[Node %d] [PendingQueue] Seq=%d has NOOP Skipping.", node.nodeId, SequenceNum)
+			continue
+		}
+
+		reqId := makeRequestKey(ClientId,Timestamp)
+		_, exists := node.GetCachedReply(ClientId, Timestamp)
+
+		log.Printf("[Node %d] [PendingQueue] ... checking reply cache for reqId=%s", node.nodeId, reqId)
+		// This means its not already executed before and thus can be added to pending queue
+		if !exists {
+			log.Printf("[Node %d] [PendingQueue] ... NOT EXECUTED. Added reqId=%s (seq=%d) to new pending list.", node.nodeId, reqId, SequenceNum)
+			pendingRequests[reqId] = true
+		}
+	}
+
+	log.Printf("[Node %d] [PendingQueue] Acquiring muPending lock to update node.pendingRequests...", node.nodeId)
+	// Actual update in the memory
+	node.muPending.Lock()
+	node.pendingRequests = pendingRequests
+	node.muPending.Unlock()
+	log.Printf("[Node %d] [PendingQueue] Released muPending lock. Node's pendingRequests map updated to size %d.", node.nodeId, len(pendingRequests))
+}
+
 func(node *Node) drainQueuedRequests(leaderId int32){
 	node.muReqQue.Lock()
     queued := node.requestsQueue
@@ -1062,8 +1123,16 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 	// 3. Install log
 	node.installMergedAcceptLog(msg.AcceptLog,msg.Ballot,msg.MinSeq,msg.MaxSeq,false)
 
-	// 4. Send accepted back for each entry
+	// 4. Build pending queue
+	node.buildPendingRequestsQueue()
+
+	// 5. Send accepted back for each entry
 	node.sendBackAcceptedForEntireMergedLog(msg)
+
+	// 6. Start the timer
+	if node.hasPendingWork(){
+		node.livenessTimer.Start()
+	}
 
 	return &emptypb.Empty{},nil
 }

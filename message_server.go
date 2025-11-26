@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	pb "transaction-processor/message"
 
@@ -570,7 +571,7 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 				var status string
 				
 				// Execute the request
-				log.Printf("[Node %d] [Ballot %d] EXECUTING: Seq=%d, Client=%d, Sender=%s, Receiver=%s, Amount=%d",
+				log.Printf("[Node %d] [Ballot Round=%d] EXECUTING: Seq=%d, Client=%d, Sender=%s, Receiver=%s, Amount=%d",
 					node.nodeId, entry.Ballot.RoundNumber,entry.SequenceNum, entry.Request.ClientId,
 					entry.Request.Transaction.Sender, entry.Request.Transaction.Receiver,
 					entry.Request.Transaction.Amount)
@@ -582,16 +583,19 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 					Amount:   entry.Request.Transaction.Amount,
 				}
 
-				response, _ := node.processTransaction(transaction)
+				response, err := node.processTransaction(transaction)
+
+				if err != nil {
+					log.Printf("[Node %d] Error in execution=%v",node.nodeId,err)
+				}
 
 				status = "failure"
 				if response {
 					status = "success"
 				}
 			
-				node.persistState()
+				// node.persistState()
 				
-
 				reply := &pb.ReplyMessage{
 					ClientId:         entry.Request.ClientId,
 					ClientRequestTimestamp: entry.Request.Timestamp,
@@ -1162,6 +1166,18 @@ func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage){
 func (node *Node) PrintAcceptLog(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
 	node.PrintAcceptLogUtil()
 	
+	return &emptypb.Empty{},nil
+}
+
+func(node *Node) PrintBalance(ctx context.Context,req *pb.PrintBalanceReq ) (*emptypb.Empty, error) {
+	balance,err := node.getBalance(req.ClientName)
+
+	if err == nil {
+		fmt.Printf("[Node %d] Balance=%d Client=%s\n",node.nodeId,balance,req.ClientName)
+	} else {
+		log.Printf("[Node %d] Error while reading balance for client=%s err=%v",node.nodeId,req.ClientName,err)
+	}
+
 	return &emptypb.Empty{},nil
 }
 

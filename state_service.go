@@ -6,13 +6,12 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"path/filepath"
-	"sort"
+
+	"github.com/cockroachdb/pebble"
 )
 
 type BankAccount struct {
@@ -24,33 +23,85 @@ type BankAccounts struct {
     Accounts []BankAccount `json:"accounts"`
 }
 
-
+// Has to be called under muExec
 func (node *Node) processTransaction(transaction Transaction) (bool, error) {
     sender := transaction.Sender
     receiver := transaction.Receiver
     amount := transaction.Amount
-
+    
+    
     if amount <= 0 {
         return false, fmt.Errorf("amount must be positive")
     }
 
-    // Read from the in-memory map
-    senderBalance, ok := node.state[sender]
-    if !ok {
-        return false, fmt.Errorf("sender '%s' not found", sender)
-    }
-    if _, ok := node.state[receiver]; !ok {
-        return false, fmt.Errorf("receiver '%s' not found", receiver)
+    // log.Printf("[Node %d] Amt check complete",node.nodeId)
+
+
+    senderData, senderCloser, err := node.state.Get(accountKey(sender))
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            return false, fmt.Errorf("sender '%s' not found", sender)
+        }
+        return false, fmt.Errorf("failed to read sender: %v", err)
     }
 
-    // Check balance
+    // log.Printf("[Node %d] Sender check complete",node.nodeId)
+
+    senderBalance, err := deserializeBalance(senderData)
+    senderCloser.Close()
+    if err != nil {
+        return false, fmt.Errorf("failed to deserialize sender balance: %v", err)
+    }
+
+    // log.Printf("[Node %d] Sender balance check complete",node.nodeId)
+
+    receiverData, receiverCloser, err := node.state.Get(accountKey(receiver))
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            return false, fmt.Errorf("receiver '%s' not found", receiver)
+        }
+        return false, fmt.Errorf("failed to read receiver: %v", err)
+    }
+
+    // log.Printf("[Node %d] Receiver check complete",node.nodeId)
+
+    receiverBalance, err := deserializeBalance(receiverData)
+    receiverCloser.Close()
+    if err != nil {
+        return false, fmt.Errorf("failed to deserialize receiver balance: %v", err)
+    }
+
+    // log.Printf("[Node %d] Receiver balance check complete",node.nodeId)
+
     if senderBalance < amount {
         return false, fmt.Errorf("insufficient funds for %s", sender)
     }
 
-    // Execute transfer IN MEMORY
-    node.state[sender] -= amount
-    node.state[receiver] += amount
+    // log.Printf("[Node %d] Valid funds complete",node.nodeId)
+    
+    newSenderBal := senderBalance - amount
+    newReceiverBal := receiverBalance + amount
+
+    batch := node.state.NewBatch()
+    defer batch.Close()
+
+    // log.Printf("[Node %d] Serialize start",node.nodeId)
+    sData, _ := serializeBalance(newSenderBal)
+    rData, _ := serializeBalance(newReceiverBal)
+
+    // log.Printf("[Node %d] PRE SET sender",node.nodeId)
+    if err := batch.Set(accountKey(sender), sData, nil); err != nil {
+        return false, err
+    }
+    // log.Printf("[Node %d] PRE SET receiver",node.nodeId)
+    if err := batch.Set(accountKey(receiver), rData, nil); err != nil {
+        return false, err
+    }
+    // log.Printf("[Node %d] SET complete",node.nodeId)
+    if err := batch.Commit(pebble.NoSync); err != nil {
+        return false, err
+    }
+    // log.Printf("[Node %d] COMMIT complete",node.nodeId)
 
     return true, nil
 }
@@ -75,113 +126,123 @@ func loadInitialState() BankAccounts {
     return data
 }
 
-func (node *Node) loadState() error {
-    // This is the file-reading logic from your processTransaction
-    jsonFilename := fmt.Sprintf("state_node%d.json", node.nodeId)
-    jsonFilePath := "state/" + jsonFilename
-    var bankAccounts BankAccounts
 
-    if _, err := os.Stat(jsonFilePath); os.IsNotExist(err) {
-        log.Printf("[Node %d] No state file found, loading initial state.", node.nodeId)
-        bankAccounts = loadInitialState() // You already have this function
-        
-        // Write it to disk so it exists
-        if err := writeToJson(jsonFilePath, bankAccounts); err != nil {
-            return fmt.Errorf("failed to write initial state: %v", err)
-        }
-    } else {
-        log.Printf("[Node %d] Loading existing state from %s", node.nodeId, jsonFilePath)
-        byteValue := readFromJson(jsonFilePath) // You have this
-        if err := json.Unmarshal(byteValue, &bankAccounts); err != nil {
-            return fmt.Errorf("failed to unmarshal existing state: %v", err)
-        }
+func (node *Node) loadState() error {
+    dbPath := fmt.Sprintf("state/node%d", node.nodeId)
+
+    if err := os.MkdirAll("state", 0755); err != nil {
+        return fmt.Errorf("failed to create state directory: %v", err)
+    }
+
+    newDB, err := pebble.Open(dbPath, &pebble.Options{})
+    if err != nil {
+        return fmt.Errorf("failed to open pebble db: %v", err)
     }
 
     node.muState.Lock()
-    defer node.muState.Unlock()
+    node.state = newDB
+    node.muState.Unlock()
+
+
+    log.Printf("[Node %d] Initializing new database with default accounts", node.nodeId)
+    initialData := loadInitialState()
     
-    for _, acc := range bankAccounts.Accounts {
-        node.state[acc.Name] = acc.Balance
+    batch := newDB.NewBatch()
+    defer batch.Close() 
+
+
+    for _, account := range initialData.Accounts {
+        data, err := serializeBalance(account.Balance)
+        if err != nil {
+            return fmt.Errorf("failed to serialize balance for %s: %v", account.Name, err)
+        }
+        
+        if err := batch.Set(accountKey(account.Name), data, nil); err != nil {
+            return fmt.Errorf("failed to write initial account %s: %v", account.Name, err)
+        }
     }
+    
+    if err := batch.Commit(pebble.NoSync); err != nil {
+        return fmt.Errorf("failed to commit initial state: %v", err)
+    }
+    
+    log.Printf("[Node %d] Successfully initialized %d accounts in DB", node.nodeId, len(initialData.Accounts))
     
     return nil
-}
-
-//  Will be called inside a muStateLock
-func (node *Node) persistState() { 
-    var bankAccounts BankAccounts
-    for name, balance := range node.state {
-        bankAccounts.Accounts = append(bankAccounts.Accounts, BankAccount{Name: name, Balance: balance})
-    }
-    
-    sort.Slice(bankAccounts.Accounts, func(i, j int) bool {
-        return bankAccounts.Accounts[i].Name < bankAccounts.Accounts[j].Name
-    })
-
-    jsonFilename := fmt.Sprintf("state_node%d.json", node.nodeId)
-    jsonFilePath := "state/" + jsonFilename
-    
-    if err := writeToJson(jsonFilePath, bankAccounts); err != nil {
-        log.Printf("[Node %d] ERROR: Failed to persist state to disk: %v", node.nodeId,err)
-    } else {
-        log.Printf("[Node %d] Successfully persisted state to %s", node.nodeId, jsonFilePath)
-    }
 }
 
 
 func (node *Node) DeleteStateFile() error {
-    jsonFilename := fmt.Sprintf("state_node%d.json", node.nodeId) // e.g., state_node3.json [attached_file:9]
-    jsonFilePath := "state/" + jsonFilename
+    dbPath := fmt.Sprintf("state/node%d", node.nodeId)
 
-    if err := os.Remove(jsonFilePath); err != nil {
+    node.muState.Lock()
+    if node.state != nil {
+        if err := node.state.Close(); err != nil {
+            log.Printf("[Node %d] Warning: error closing DB: %v", node.nodeId, err)
+        }
+        node.state = nil
+    }
+    node.muState.Unlock()
+
+
+    if err := os.RemoveAll(dbPath); err != nil {
         if os.IsNotExist(err) {
-            log.Printf("[Node %d] State file already absent: %s", node.nodeId, jsonFilePath) // ok [attached_file:9]
+            log.Printf("[Node %d] DB file already absent: %s", node.nodeId, dbPath)
             return nil
         }
-        return fmt.Errorf("[Node %d] failed to delete %s: %v", node.nodeId, jsonFilePath, err) // [attached_file:9]
+        return fmt.Errorf("[Node %d] failed to delete DB file %s: %v", node.nodeId, dbPath, err)
     }
 
-    log.Printf("[Node %d] Deleted state file: %s", node.nodeId, jsonFilePath) // [attached_file:9]
+    log.Printf("[Node %d] Deleted DB file: %s", node.nodeId, dbPath)
     return nil
 }
 
-
-func readFromJson(jsonFilename string) []byte {
-    jsonFile, err := os.Open(jsonFilename)
-
-	if err != nil {
-		log.Println("Error opening file:", err)
-        return []byte{}
-	}
-
-	defer jsonFile.Close()
-
-    byteValue, err := io.ReadAll(jsonFile)
-
-    if err != nil {
-        log.Printf("Error reading file %s: %v\n", jsonFilename, err)
-        return []byte{}
-    }
-
-    return byteValue
+func accountKey(name string) []byte {
+    return []byte("account:" + name)
 }
 
+func serializeBalance(balance int32) ([]byte, error) {
+    buf := make([]byte, 4)
+    binary.LittleEndian.PutUint32(buf, uint32(balance))
+    return buf, nil
+}
 
-func writeToJson(filename string, data interface{}) error {
-    if err := os.MkdirAll(filepath.Dir(filename), 0755); err != nil {
-        return fmt.Errorf("failed to create directory: %w", err)
+func deserializeBalance(data []byte) (int32, error) {
+    if len(data) < 4 {
+        return 0, fmt.Errorf("invalid data length")
     }
+    return int32(binary.LittleEndian.Uint32(data)), nil
+}
 
-	updatedJsonData, err := json.MarshalIndent(data, "", "  ")
+func (node *Node) getBalance(accountName string) (int32, error) {
+    node.muState.RLock()
+    defer node.muState.RUnlock()
+    
+    data, closer, err := node.state.Get(accountKey(accountName))
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            return 0, fmt.Errorf("account '%s' not found", accountName)
+        }
+        return 0, fmt.Errorf("failed to read account: %v", err)
+    }
+    defer closer.Close()
+    
+    balance, err := deserializeBalance(data)
+    if err != nil {
+        return 0, fmt.Errorf("invalid balance data: %v", err)
+    }
+    
+    return balance, nil
+}
 
-	if err != nil {
-		return fmt.Errorf("error marshaling JSON: %w", err)
-	}
-
-	err = os.WriteFile(filename, updatedJsonData, 0644)
-	if err != nil {
-		return fmt.Errorf("error writing to file: %w", err)
-	}
-
-	return nil
+func (node *Node) setBalance(accountName string, balance int32) error {
+    node.muState.Lock()
+    defer node.muState.Unlock()
+    
+    data, err := serializeBalance(balance)
+    if err != nil {
+        return fmt.Errorf("failed to serialize balance: %v", err)
+    }
+    
+    return node.state.Set(accountKey(accountName), data, pebble.Sync)
 }

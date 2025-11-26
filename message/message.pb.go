@@ -639,6 +639,50 @@ func (x *NewViewMessage) GetMaxSeq() int32 {
 	return 0
 }
 
+type PrintBalanceReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientName    string                 `protobuf:"bytes,1,opt,name=ClientName,proto3" json:"ClientName,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrintBalanceReq) Reset() {
+	*x = PrintBalanceReq{}
+	mi := &file_message_message_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrintBalanceReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrintBalanceReq) ProtoMessage() {}
+
+func (x *PrintBalanceReq) ProtoReflect() protoreflect.Message {
+	mi := &file_message_message_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrintBalanceReq.ProtoReflect.Descriptor instead.
+func (*PrintBalanceReq) Descriptor() ([]byte, []int) {
+	return file_message_message_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *PrintBalanceReq) GetClientName() string {
+	if x != nil {
+		return x.ClientName
+	}
+	return ""
+}
+
 var File_message_message_proto protoreflect.FileDescriptor
 
 const file_message_message_proto_rawDesc = "" +
@@ -684,7 +728,11 @@ const file_message_message_proto_rawDesc = "" +
 	"\tAcceptLog\x18\x02 \x03(\v2\x18.message.AcceptedMessageR\tAcceptLog\x12\x16\n" +
 	"\x06NodeId\x18\x03 \x01(\x05R\x06NodeId\x12\x16\n" +
 	"\x06MinSeq\x18\x04 \x01(\x05R\x06MinSeq\x12\x16\n" +
-	"\x06MaxSeq\x18\x05 \x01(\x05R\x06MaxSeq2\x9d\x05\n" +
+	"\x06MaxSeq\x18\x05 \x01(\x05R\x06MaxSeq\"1\n" +
+	"\x0fPrintBalanceReq\x12\x1e\n" +
+	"\n" +
+	"ClientName\x18\x01 \x01(\tR\n" +
+	"ClientName2\xdf\x05\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +
@@ -695,7 +743,8 @@ const file_message_message_proto_rawDesc = "" +
 	"\rHandleNewView\x12\x17.message.NewViewMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
 	"\x0ePrintAcceptLog\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12:\n" +
 	"\bFailNode\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12=\n" +
-	"\vRecoverNode\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty2M\n" +
+	"\vRecoverNode\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12@\n" +
+	"\fPrintBalance\x12\x18.message.PrintBalanceReq\x1a\x16.google.protobuf.Empty2M\n" +
 	"\rClientService\x12<\n" +
 	"\vHandleReply\x12\x15.message.ReplyMessage\x1a\x16.google.protobuf.EmptyB\x1fZ\x1dtransaction-processor/messageb\x06proto3"
 
@@ -711,7 +760,7 @@ func file_message_message_proto_rawDescGZIP() []byte {
 	return file_message_message_proto_rawDescData
 }
 
-var file_message_message_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_message_message_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_message_message_proto_goTypes = []any{
 	(*Transaction)(nil),           // 0: message.Transaction
 	(*ClientRequest)(nil),         // 1: message.ClientRequest
@@ -723,11 +772,12 @@ var file_message_message_proto_goTypes = []any{
 	(*PrepareMessage)(nil),        // 7: message.PrepareMessage
 	(*PromiseMessage)(nil),        // 8: message.PromiseMessage
 	(*NewViewMessage)(nil),        // 9: message.NewViewMessage
-	(*timestamppb.Timestamp)(nil), // 10: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),         // 11: google.protobuf.Empty
+	(*PrintBalanceReq)(nil),       // 10: message.PrintBalanceReq
+	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),         // 12: google.protobuf.Empty
 }
 var file_message_message_proto_depIdxs = []int32{
-	10, // 0: message.ClientRequest.Timestamp:type_name -> google.protobuf.Timestamp
+	11, // 0: message.ClientRequest.Timestamp:type_name -> google.protobuf.Timestamp
 	0,  // 1: message.ClientRequest.Transaction:type_name -> message.Transaction
 	2,  // 2: message.AcceptMessage.Ballot:type_name -> message.BallotNumber
 	1,  // 3: message.AcceptMessage.Request:type_name -> message.ClientRequest
@@ -736,7 +786,7 @@ var file_message_message_proto_depIdxs = []int32{
 	2,  // 6: message.CommitMessage.Ballot:type_name -> message.BallotNumber
 	1,  // 7: message.CommitMessage.Request:type_name -> message.ClientRequest
 	2,  // 8: message.ReplyMessage.Ballot:type_name -> message.BallotNumber
-	10, // 9: message.ReplyMessage.ClientRequestTimestamp:type_name -> google.protobuf.Timestamp
+	11, // 9: message.ReplyMessage.ClientRequestTimestamp:type_name -> google.protobuf.Timestamp
 	2,  // 10: message.PrepareMessage.Ballot:type_name -> message.BallotNumber
 	2,  // 11: message.PromiseMessage.Ballot:type_name -> message.BallotNumber
 	4,  // 12: message.PromiseMessage.AcceptLog:type_name -> message.AcceptedMessage
@@ -749,23 +799,25 @@ var file_message_message_proto_depIdxs = []int32{
 	7,  // 19: message.MessageService.HandlePrepare:input_type -> message.PrepareMessage
 	8,  // 20: message.MessageService.HandlePromise:input_type -> message.PromiseMessage
 	9,  // 21: message.MessageService.HandleNewView:input_type -> message.NewViewMessage
-	11, // 22: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
-	11, // 23: message.MessageService.FailNode:input_type -> google.protobuf.Empty
-	11, // 24: message.MessageService.RecoverNode:input_type -> google.protobuf.Empty
-	6,  // 25: message.ClientService.HandleReply:input_type -> message.ReplyMessage
-	11, // 26: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
-	11, // 27: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
-	11, // 28: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
-	11, // 29: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
-	11, // 30: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
-	11, // 31: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
-	11, // 32: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
-	11, // 33: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
-	11, // 34: message.MessageService.FailNode:output_type -> google.protobuf.Empty
-	11, // 35: message.MessageService.RecoverNode:output_type -> google.protobuf.Empty
-	11, // 36: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
-	26, // [26:37] is the sub-list for method output_type
-	15, // [15:26] is the sub-list for method input_type
+	12, // 22: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
+	12, // 23: message.MessageService.FailNode:input_type -> google.protobuf.Empty
+	12, // 24: message.MessageService.RecoverNode:input_type -> google.protobuf.Empty
+	10, // 25: message.MessageService.PrintBalance:input_type -> message.PrintBalanceReq
+	6,  // 26: message.ClientService.HandleReply:input_type -> message.ReplyMessage
+	12, // 27: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
+	12, // 28: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
+	12, // 29: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
+	12, // 30: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
+	12, // 31: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
+	12, // 32: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
+	12, // 33: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
+	12, // 34: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
+	12, // 35: message.MessageService.FailNode:output_type -> google.protobuf.Empty
+	12, // 36: message.MessageService.RecoverNode:output_type -> google.protobuf.Empty
+	12, // 37: message.MessageService.PrintBalance:output_type -> google.protobuf.Empty
+	12, // 38: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
+	27, // [27:39] is the sub-list for method output_type
+	15, // [15:27] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
@@ -782,7 +834,7 @@ func file_message_message_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_message_message_proto_rawDesc), len(file_message_message_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

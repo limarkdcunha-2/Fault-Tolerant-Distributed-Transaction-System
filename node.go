@@ -14,6 +14,7 @@ import (
 	"time"
 	pb "transaction-processor/message"
 
+	"github.com/cockroachdb/pebble"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -86,7 +87,7 @@ type Node struct {
 	// catchUpExecSeqNo int32
 
 	muState sync.RWMutex
-    state   map[string]int32
+    state   *pebble.DB
 
 	muReqQue sync.RWMutex
 	requestsQueue []*pb.ClientRequest
@@ -142,7 +143,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		lastExecSeqNo:0,
 		inLeaderElection:false,
 		isLeaderKnown:false,
-		state:make(map[string]int32),
+		// state:make(map[string]int32),
 		acceptLog:make(map[int32]*LogEntry),
 		peers: make( map[int32]pb.MessageServiceClient),
 		replies: make(map[string]*pb.ReplyMessage),

@@ -49,7 +49,7 @@ const (
 
 
 type LogEntry struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 	SequenceNum  int32
 	Ballot *pb.BallotNumber
 	Request *pb.ClientRequest
@@ -159,7 +159,11 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		lastExecSeqNo:0,
 		inLeaderElection:false,
 		isLeaderKnown:false,
-		checkpointInterval:10,
+		checkpointInterval:100,
+		latestCheckpointMessage: &pb.CheckpointMessage{
+			SequenceNum: 0,
+			Digest: "",
+		},	
 		// state:make(map[string]int32),
 		acceptLog:make(map[int32]*LogEntry),
 		peers: make( map[int32]pb.MessageServiceClient),

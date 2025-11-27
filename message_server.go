@@ -77,19 +77,31 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
         return
     }
 
+
 	// 3. Check pending requests (assigned seq but not executed)
-    if isPending := node.checkIfPending(req.ClientId, req.Timestamp); isPending {
+	node.muPending.Lock()
+	
+	reqKey := makeRequestKey(req.ClientId, req.Timestamp)
+	_, isPending := node.pendingRequests[reqKey]
+
+	// 3a If pending do nothing
+    if isPending {
+		node.muPending.Unlock()
+
         log.Printf("[Node %d]: Duplicate (pending) from client %d - ignoring retry",
             node.nodeId, req.ClientId)
         return
     }
 
+	// 3b Mark as pending
+	node.pendingRequests[reqKey] = true
+	node.muPending.Unlock()
+
 	// 4. Reroute the request to leader
 	if node.nodeId != leaderId {
 		log.Printf("[Node %d] Not primary, routing client request to primary", node.nodeId)
 		
-		node.markRequestPending(req.ClientId, req.Timestamp)
-
+		// node.markRequestPending(req.ClientId, req.Timestamp)
 		if !node.livenessTimer.IsRunning() {
 			node.livenessTimer.Start()
 		}
@@ -116,8 +128,8 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 	log.Printf("[Node %d] Assigning seq=%d to request (%s, %s, %d)",
 	node.nodeId,seq,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
-	// 6. Mark this request in processing
-	node.markRequestPending(req.ClientId, req.Timestamp)
+	// // 6. Mark this request in processing
+	// node.markRequestPending(req.ClientId, req.Timestamp)
 
 	acceptMessage := &pb.AcceptMessage{
 		Ballot:node.myBallot,
@@ -299,13 +311,15 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 		Request: msg.Request,
 		NodeId: node.nodeId,
 	}
+	
+	node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
+
+	go node.sendAcceptedMessage(acceptedMessage)
 
 	// Impt: Start timer if not already running
 	if !node.livenessTimer.IsRunning(){
 		node.livenessTimer.Start()
 	}
-
-	go node.sendAcceptedMessage(acceptedMessage)
 
 	return &emptypb.Empty{}, nil
 }
@@ -611,19 +625,28 @@ func (node *Node) executeInOrder(isLeader bool) {
 				}
 
 				// Check if we should create a checkpoint
-				if (nextSeq) % node.checkpointInterval == 0 && isLeader {
+				if (nextSeq) % node.checkpointInterval == 0 {
 					log.Printf("[Node %d] Seq=%d satifies checkpointing interval",node.nodeId,nextSeq)
-					stateDigest,err := node.computeStateDigest()
-					log.Printf("[Node %d] Seq=%d state digest computation complete",node.nodeId,nextSeq)
+				
+					node.muCheckpoint.Lock()
+					// Storing last stable state snapshot to send during catchup request
+					if node.lastStableSnapshot != nil {
+						node.lastStableSnapshot.Close()
+					}
+					node.lastStableSnapshot = node.state.NewSnapshot()
+					log.Printf("[Node %d] Seq=%d snapshot installation complete",node.nodeId,nextSeq)
 
-					if err == nil {
-						node.muCheckpoint.Lock()
-						// Storing last stable state snapshot to send during catchup request
-						if node.lastStableSnapshot != nil {
-							node.lastStableSnapshot.Close()
+					if isLeader {
+						stateDigest,err := node.computeStateDigest()
+
+						if err != nil {
+							log.Printf("[Node %d] CRITICAL Error in computing state digest for seq=%d",node.nodeId,nextSeq)
+							node.muCheckpoint.Unlock()
+
+							continue
 						}
-						node.lastStableSnapshot = node.state.NewSnapshot()
-						log.Printf("[Node %d] Seq=%d snapshot installation complete",node.nodeId,nextSeq)
+
+						log.Printf("[Node %d] Seq=%d state digest computation complete",node.nodeId,nextSeq)
 
 						msg := &pb.CheckpointMessage{
 							SequenceNum: nextSeq,
@@ -634,17 +657,18 @@ func (node *Node) executeInOrder(isLeader bool) {
 						// Log highest checkpointing message
 						node.latestCheckpointMessage = msg
 						log.Printf("[Node %d] Seq=%d latest checkpoint message updated",node.nodeId,nextSeq)
-						node.muCheckpoint.Unlock()
 
 						go node.broadcastCheckpointMessage(msg)
-						
-						// Spawning this in go rotuntine here seems little risky
-						// But since this is for past sequece numbers dont think there should be an issue
-						// Since only checkpointing activity will be present for these sequence numbers
-						go node.garbageCollectBeforeCheckpoint(nextSeq)
-					} else {
-						log.Printf("[Node %d] Error in computing state digest at seq=%d error=%v",node.nodeId,nextSeq,err)
 					}
+					
+					// Spawning this in go rotuntine here seems little risky
+					// But since this is for past sequece numbers dont think there should be an issue
+					// Since only checkpointing activity will be present for these sequence numbers
+					go node.garbageCollectBeforeCheckpoint(nextSeq)
+
+
+					node.muCheckpoint.Unlock()
+					
 				}
 
 				node.muState.Unlock()
@@ -753,32 +777,55 @@ func (node *Node) HandlePrepare(ctx context.Context, msg *pb.PrepareMessage) (*e
 
 
 func (node *Node) buildAndSendPromise(ballot *pb.BallotNumber){
+	log.Printf("[Node %d] Building promise message",node.nodeId)
+	node.muCheckpoint.Lock()
+	lastCheckpointSeq := node.latestCheckpointMessage.SequenceNum
+	lastCheckpointDigest := node.latestCheckpointMessage.Digest 
+	node.muCheckpoint.Unlock()
+	
 	promiseMsg := &pb.PromiseMessage {
 		Ballot: ballot,
-		AcceptLog: node.getAcceptedLogForPromise(),
+		AcceptLog: node.getAcceptedLogForPromise(lastCheckpointSeq),
 		NodeId: node.nodeId,
+		LastCheckpointSeq: lastCheckpointSeq,
+		LastCheckpointDigest: lastCheckpointDigest,
 	}
-	
+
+	log.Printf("[Node %d] Building promise complete",node.nodeId)
 	go node.sendPromiseMessage(promiseMsg)
 }
 
-func (node *Node) getAcceptedLogForPromise() []*pb.AcceptedMessage {
+func (node *Node) getAcceptedLogForPromise(checkpointSeq int32) []*pb.AcceptedMessage {
     node.muLog.RLock()
     defer node.muLog.RUnlock()
 
     var acceptedEntries []*pb.AcceptedMessage
-
+	log.Printf("[Node %d] Building accept log for promise message",node.nodeId)
     for _, entry := range node.acceptLog {
-        if entry.Phase >= PhaseAccepted {
+		entry.mu.RLock()
+		Ballot := entry.Ballot
+		SequenceNum:= entry.SequenceNum
+		Request := entry.Request
+		Phase := entry.Phase
+		entry.mu.RUnlock()
+
+		// Wanna ignore all log entries before last checkpoint
+		if SequenceNum < checkpointSeq{
+			continue
+		}
+
+        if  Phase >= PhaseAccepted {
             msg := &pb.AcceptedMessage{
-                Ballot:      entry.Ballot,
-                SequenceNum: entry.SequenceNum,
-                Request:     entry.Request,
+                Ballot:      Ballot,
+                SequenceNum: SequenceNum,
+                Request:     Request,
                 NodeId:      node.nodeId,
             }
             acceptedEntries = append(acceptedEntries, msg)
         }
     }
+
+	log.Printf("[Node %d] Building accept log for promise message COMPLETE",node.nodeId)
     return acceptedEntries
 }
 
@@ -851,7 +898,10 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.promiseLog.isPromiseQuorumReached = true
 
 		// 4a Build merged accept log from promises
-		mergedLog,minSeq,maxSeq := node.buildMergedAcceptLog()
+		// The minSeq from this output will the highest checkpoint seq from the promise quorum
+		log.Printf("[Node %d] Building MERGED log for NEW-VIEW",node.nodeId)
+		mergedLog,minSeq,maxSeq,maxCheckpointNodeId := node.buildMergedAcceptLog()
+		log.Printf("[Node %d] Building MERGED log for NEW-VIE COMPLETE",node.nodeId)
 
 		node.muProLog.Unlock()
 
@@ -871,6 +921,29 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		// 4d. Install new log unto self
 		node.installMergedAcceptLog(mergedLog,msg.Ballot,minSeq,maxSeq,true)
 
+		// This exec wont work inside muLog
+		node.muExec.Lock()
+		lastExeSeq := node.lastExecSeqNo
+		node.muExec.Unlock()
+
+		highestCheckpointNo := minSeq-1
+
+		// 4f Leader is out of state and needs to catchup and thus lastExecSeqNo can only be updated in catcup flow
+		if lastExeSeq < minSeq-1 {
+			log.Printf("[Node %d] Initiating request for state transfer (in election) for seq=%d from lastExec=%d to node=%d",
+			node.nodeId,highestCheckpointNo,lastExeSeq,maxCheckpointNodeId)
+
+			go node.requestStateFromTarget(highestCheckpointNo,maxCheckpointNodeId)
+		} else{
+			// If leader has the latest state it can simply update
+			// TO DO tp remember and note down why this was needed
+			log.Printf("[Node %d] Updating lastExecSeqNo directly",node.nodeId)
+			node.muExec.Lock()
+			node.lastExecSeqNo = minSeq-1
+			node.muExec.Unlock()
+			log.Printf("[Node %d] Updating lastExecSeqNo directly COMPLETE",node.nodeId)
+		}
+
 		// 4e. Broadcast new view
 		newViewMsg := &pb.NewViewMessage{
 			Ballot: msg.Ballot,
@@ -878,15 +951,19 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 			NodeId: node.nodeId,
 			MinSeq: minSeq,
 			MaxSeq: maxSeq,
+			MinSeqNodeId: maxCheckpointNodeId,
 		}
-
+		
 		go node.broadcastNewView(newViewMsg)
+		log.Printf("[Node %d] Broadcast NEW-VIEW fired off",node.nodeId)
 
 		// 4f. Reset the pending cause role has been changed from follower to leader
-		node.buildPendingRequestsQueue()
+		node.buildPendingRequestsQueue(highestCheckpointNo)
+		log.Printf("[Node %d] Building pending requests complete",node.nodeId)
 
 		// 4g. Start draining pending requests queue
 		node.drainQueuedRequests(node.nodeId)
+		log.Printf("[Node %d] Draining queued requests complete (as leader)",node.nodeId)
 
 		return &emptypb.Empty{},nil
 	}
@@ -896,26 +973,46 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 }
 
 // Lock for promise log has been held in parent
-func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32) {
-	// update minS with checkpointing interval
-	var minS int32 = 1
-    var maxSeq int32 = 0
+func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32,int32) {
+	// 1. Intializing minS and maxS
+	var maxCheckpointSeq int32 = 0
+	var maxCheckpointNodeId int32 = 0
+
+    for _, promise := range node.promiseLog.log {
+        if promise.LastCheckpointSeq > maxCheckpointSeq {
+            maxCheckpointSeq = promise.LastCheckpointSeq
+			maxCheckpointNodeId = promise.NodeId
+        }
+    }
+
+	minS := maxCheckpointSeq + 1
+    var maxSeq int32 = minS - 1
 	
 	merged := make(map[int32]*pb.AcceptedMessage)
 
+	// 2. Merge log
 	for _, promise := range node.promiseLog.log {
         for _, accepted := range promise.AcceptLog {
             seq := accepted.SequenceNum
+
+			if seq < minS {
+                continue
+            }
+
             if seq > maxSeq {
                 maxSeq = seq
             }
+
             existing, exists := merged[seq]
+
+			// 2a Highest ballot wins
             if !exists || node.isBallotGreaterThan(accepted.Ballot, existing.Ballot) {
                 merged[seq] = accepted
             }
         }
     }
 
+	// 3 Gaps handling (NOOP)
 	for seq := minS; seq <= maxSeq; seq++ {
         _, exists := merged[seq]
         if !exists {
@@ -936,19 +1033,29 @@ func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32) {
 		}
 	}
 
-	mergedSlice := make([]*pb.AcceptedMessage, maxSeq)
+	// 4. Convert to slice
+	sliceSize := maxSeq - minS + 1
+    mergedSlice := make([]*pb.AcceptedMessage, sliceSize)
+
     for seq := minS; seq <= maxSeq; seq++ {
-        mergedSlice[seq-1] = merged[seq]
+        mergedSlice[seq-minS] = merged[seq]
     }
 
-    return mergedSlice,minS,maxSeq
+    return mergedSlice,minS,maxSeq,maxCheckpointNodeId
 }
 
 func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winningBallot *pb.BallotNumber,minSeq int32,maxSeq int32,isLeader bool) {
 	node.muLog.Lock()
-    
+	
+	// 1. Installing merged log
 	for _, acceptedMsg := range mergedLog {
 		seq := acceptedMsg.SequenceNum
+
+		// Ignore old entries before checkpoint
+		if seq < minSeq {
+            continue
+        }
+
 		entry, exists := node.acceptLog[seq]
 
 		if !exists {
@@ -1000,27 +1107,24 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 		}
 	}
 
-	if maxSeq - minSeq +1 > int32(len(node.acceptLog)) {
-		//  for _, entry := range node.acceptLog {
-		// Clear any acceptLog entries beyond maxSeq to remove stale data
-		for seq := range node.acceptLog {
-			log.Printf("[Node %d] Attempting delete at seq=%d",node.nodeId,seq)
-			if seq > maxSeq {
-				log.Printf("[Node %d] Deleted at seq=%d",node.nodeId,seq)
-				delete(node.acceptLog, seq)
-			}
+
+	//2. Clear any acceptLog entries beyond maxSeq to remove stale data
+	for _, entry := range node.acceptLog{
+		entry.mu.RLock()
+		seq := entry.SequenceNum
+		entry.mu.RUnlock()
+
+		log.Printf("[Node %d] Attempting delete at seq=%d",node.nodeId,seq)
+		if seq > maxSeq {
+			log.Printf("[Node %d] Deleted at seq=%d",node.nodeId,seq)
+			delete(node.acceptLog, seq)
 		}
 	}
-
+	
+	// 3. Updating curentSeq
 	node.currentSeqNo = maxSeq
 	node.muLog.Unlock()
 
-	if isLeader {
-		node.muExec.Lock()
-		node.lastExecSeqNo = minSeq-1
-		node.muExec.Unlock()
-	}
-	
 	log.Printf("[Node %d] installMergedAcceptLog complete: minSeq=%d maxSeq=%d, cleared entries beyond max", node.nodeId,minSeq, maxSeq)
 }
 
@@ -1046,14 +1150,14 @@ func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
             _, err := client.HandleNewView(context.Background(), msg)
             
             if err != nil {
-                log.Printf("[Node %d] FAILED to send PREPARE Round=%d to Node %d: %v", 
+                log.Printf("[Node %d] FAILED to send NEW-VIEW Round=%d to Node %d: %v", 
                     node.nodeId, msg.Ballot.RoundNumber, id, err)
             }
         }(nodeId, peerClient)
 	}
 }
 
-func (node *Node) buildPendingRequestsQueue(){
+func (node *Node) buildPendingRequestsQueue(highestCheckpointSeq int32){
 	node.muLog.RLock()
 
 	logCopy := make(map[int32]*LogEntry, len(node.acceptLog))
@@ -1074,6 +1178,11 @@ func (node *Node) buildPendingRequestsQueue(){
 		Timestamp := entry.Request.Timestamp
 		
 		entry.mu.Unlock()
+		
+		// IMPT Need to trust that state transfer will eventually update the last executed seq number
+		if SequenceNum <= highestCheckpointSeq{
+			continue
+		}
 
 		if ClientId == -1 {
 			log.Printf("[Node %d] [PendingQueue] Seq=%d has NOOP Skipping.", node.nodeId, SequenceNum)
@@ -1145,7 +1254,7 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 		node.livenessTimer.Stop()
 	}
 
-	// 2. Update the ballot and the flags
+	// 3. Update the ballot and the flags
 	node.muBallot.Lock()
 	node.promisedBallotAccept = msg.Ballot
 	node.promisedBallotPrepare = msg.Ballot
@@ -1163,16 +1272,32 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 	}
 	node.muPreLog.Unlock()
 
-	// 3. Install log
+	node.muExec.Lock()
+	lastExecSeqNo := node.lastExecSeqNo 
+	node.muExec.Unlock()
+
+	// 4. If behind initiate catchup mechanism
+	highestCheckpointSeq :=  msg.MinSeq-1
+	if lastExecSeqNo < highestCheckpointSeq {
+		log.Printf("[Node %d] Initiating request for state transfer (new view receipt) for seq=%d, from node=%d",
+		node.nodeId,highestCheckpointSeq,msg.MinSeqNodeId)
+		go node.requestStateFromTarget(highestCheckpointSeq,msg.MinSeqNodeId)
+	}
+
+	// 5. Install log
 	node.installMergedAcceptLog(msg.AcceptLog,msg.Ballot,msg.MinSeq,msg.MaxSeq,false)
 
-	// 4. Build pending queue
-	node.buildPendingRequestsQueue()
+	// 6. Build pending queue from new log
+	node.buildPendingRequestsQueue(highestCheckpointSeq)
 
-	// 5. Send accepted back for each entry
-	node.sendBackAcceptedForEntireMergedLog(msg)
+	// 7. Drain queued requests
+	node.drainQueuedRequests(msg.Ballot.NodeId)
+	log.Printf("[Node %d] Draining queued requests complete (as backup)",node.nodeId)
 
-	// 6. Start the timer
+	// 8. Send accepted back for each entry
+	node.sendBackAcceptedForEntireMergedLog(msg,highestCheckpointSeq)
+
+	// 9. Start the timer
 	if node.hasPendingWork(){
 		node.livenessTimer.Start()
 	}
@@ -1180,22 +1305,31 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 	return &emptypb.Empty{},nil
 }
 
-func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage){
+func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage,highestCheckpointSeq int32){
 	log.Printf("[Node %d] Sending ACCEPTED (entire ballot) back for ballot(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
 	node.muLog.RLock()
 	defer node.muLog.RUnlock()
 
 	for _, entry := range node.acceptLog {
 		entry.mu.Lock()
-
-		acceptedMsg := &pb.AcceptedMessage{
-			Ballot:      entry.Ballot,     
-			SequenceNum: entry.SequenceNum,
-			Request:     entry.Request,  
-			NodeId:      node.nodeId,
-		}
+		
+		Ballot := entry.Ballot
+		SequenceNum := entry.SequenceNum
+		Request := entry.Request
 
 		entry.mu.Unlock()
+
+		// No need to send accepted for already checkpointed seq numbers
+		if SequenceNum <= highestCheckpointSeq{
+			continue
+		}
+
+		acceptedMsg := &pb.AcceptedMessage{
+			Ballot:      Ballot,     
+			SequenceNum: SequenceNum,
+			Request:     Request,  
+			NodeId:      node.nodeId,
+		}
 
 		go node.sendAcceptedMessage(acceptedMsg)
 	}
@@ -1241,29 +1375,25 @@ func(node *Node) HandleCheckpoint(ctx context.Context,msg *pb.CheckpointMessage)
 	log.Printf("[Node %d]: Received CHECKPOINT from Node %d, seq=%d, digest=%s", 
         node.nodeId, msg.NodeId, msg.SequenceNum, msg.Digest[:16])
 
-	// 1. Store checkpoint message
-	node.muCheckpoint.Lock()
-	if node.latestCheckpointMessage == nil {
-		node.latestCheckpointMessage = msg;
-	} else if (msg.SequenceNum > node.latestCheckpointMessage.SequenceNum) {
-		node.latestCheckpointMessage = msg;
-	} else if(msg.SequenceNum < node.latestCheckpointMessage.SequenceNum){
-		log.Printf("[Node %d] Received stale CHECKPOINT message with seq=%d",node.nodeId,msg.SequenceNum)
-
-		node.muCheckpoint.Unlock()
-		return &emptypb.Empty{}, nil
-	}
-	node.muCheckpoint.Unlock()
-
+	// 1. Check executing lag
 	node.muExec.Lock()
 	lastExecSeq := node.lastExecSeqNo
 	node.muExec.Unlock()
 
-	if msg.SequenceNum > lastExecSeq {
+	// Lagging in state so need to catchup
+	if lastExecSeq < msg.SequenceNum {
 		log.Printf("[Node %d] Initiating request for state transfer for seq=%d",node.nodeId,msg.SequenceNum)
-		go node.requestStateFromLeader(msg.SequenceNum,msg.NodeId)
+		go node.requestStateFromTarget(msg.SequenceNum,msg.NodeId)
 	} else{
-		go node.garbageCollectBeforeCheckpoint(msg.SequenceNum)
+		// state upto date
+		node.muCheckpoint.Lock()
+		if node.latestCheckpointMessage == nil || msg.SequenceNum > node.latestCheckpointMessage.SequenceNum {
+			log.Printf("[Node %d] Updating stable checkpoint metadata to seq=%d", node.nodeId, msg.SequenceNum)
+            node.latestCheckpointMessage = msg
+
+			go node.garbageCollectBeforeCheckpoint(msg.SequenceNum)
+		}
+		node.muCheckpoint.Unlock()
 	}
 
 	return &emptypb.Empty{}, nil
@@ -1277,7 +1407,7 @@ func (node *Node) garbageCollectBeforeCheckpoint(stableSeq int32) {
     
     markedCount := 0
     for seq, entry := range node.acceptLog {
-        if seq < stableSeq {
+        if seq <= stableSeq {
             entry.mu.Lock()
             entry.Status = LogEntryDeleted
             entry.mu.Unlock()
@@ -1289,18 +1419,18 @@ func (node *Node) garbageCollectBeforeCheckpoint(stableSeq int32) {
         node.nodeId, markedCount, stableSeq)
 }
 
-func (node *Node) requestStateFromLeader(seq int32,leaderId int32) {
+func (node *Node) requestStateFromTarget(seq int32,targetId int32) {
 	req := &pb.StateTranserRequest{
 		NodeId: node.nodeId,
 		TargetSeq: seq,
 	}
 
-	_,err := node.peers[leaderId].MakeStateTransferRequest(context.Background(),req)
+	_,err := node.peers[targetId].MakeStateTransferRequest(context.Background(),req)
 
 	if err != nil {
-		log.Printf("[Node %d] Failed to send to state transfer request to leader",node.nodeId)
+		log.Printf("[Node %d] Failed to send to state transfer request to node=%d",node.nodeId,targetId)
 	} else {
-		log.Printf("[Node %d] Successfully sent state transfer request to leader",node.nodeId)
+		log.Printf("[Node %d] Successfully sent state transfer request to node=%d",node.nodeId,targetId)
 	}
 }
 
@@ -1415,7 +1545,17 @@ func (node *Node) HandleStateTransferResponse(ctx context.Context,response *pb.S
 
 	node.lastExecSeqNo = response.LatestCheckpointSeqNum
 
-	go node.garbageCollectBeforeCheckpoint(response.LatestCheckpointSeqNum)
+	node.muCheckpoint.Lock()
+	if node.latestCheckpointMessage == nil || response.LatestCheckpointSeqNum > node.latestCheckpointMessage.SequenceNum {
+		log.Printf("[Node %d] Updating stable checkpoint metadata to seq=%d", node.nodeId, response.LatestCheckpointSeqNum)
+		node.latestCheckpointMessage = &pb.CheckpointMessage{
+			SequenceNum: response.LatestCheckpointSeqNum,
+			Digest: "",// TO DO update this with apt value
+		}
+		go node.garbageCollectBeforeCheckpoint(response.LatestCheckpointSeqNum)
+	}
+	node.muCheckpoint.Unlock()
+
 
 	log.Printf("[Node %d] STATE TRANSFER COMPLETE. Jumped to Seq %d.", 
         node.nodeId, response.LatestCheckpointSeqNum)

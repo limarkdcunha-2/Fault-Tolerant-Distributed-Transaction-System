@@ -106,11 +106,18 @@ func (node *Node) startLeaderElection(){
 		Ballot: updatedBallot,
 	}
 
+	node.muCheckpoint.Lock()
+	lastCheckpointSeq := node.latestCheckpointMessage.SequenceNum
+	lastCheckpointDigest := node.latestCheckpointMessage.Digest 
+	node.muCheckpoint.Unlock()
+
 	// Log own PROMISE message
 	selfPromiseMsg := &pb.PromiseMessage {
 		Ballot: updatedBallot,
-		AcceptLog: node.getAcceptedLogForPromise(),
+		AcceptLog: node.getAcceptedLogForPromise(lastCheckpointSeq),
 		NodeId: node.nodeId,
+		LastCheckpointSeq: lastCheckpointSeq,
+		LastCheckpointDigest: lastCheckpointDigest,
 	}
 	
 	node.muProLog.Lock()

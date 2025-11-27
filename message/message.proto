@@ -68,6 +68,8 @@ message PromiseMessage{
   BallotNumber Ballot = 1;
   repeated AcceptedMessage AcceptLog = 2;
   int32 NodeId = 3;
+  int32 LastCheckpointSeq = 4;
+  string LastCheckpointDigest = 5;
 }
 
 message NewViewMessage {
@@ -76,6 +78,8 @@ message NewViewMessage {
   int32 NodeId = 3;
   int32 MinSeq = 4;
   int32 MaxSeq = 5;
+  string LastCheckpointDigest = 6;
+  int32 MinSeqNodeId = 7;
 }
 
 message CheckpointMessage{

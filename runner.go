@@ -29,6 +29,11 @@ type Runner struct {
 	localClients map[string]*Client
 }
 
+type TransactionBatch struct {
+	transactions    []TestTransaction
+	isLeaderFailure bool
+}
+
 func NewRunner() *Runner {
 	runner:= &Runner{
         nodeConfigs: getNodeCluster(),
@@ -81,9 +86,9 @@ func (r *Runner) RunAllTestSets() {
     log.Printf("[Runner] Loaded config for %d nodes and %d clients\n", len(r.nodeConfigs), len(r.localClients))
 
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        if setNum > 2 {
-            break
-        }
+        // if setNum > 3 {
+        //     break
+        // }
 
         tc := r.testCases[setNum]
         fmt.Printf("\n=========================================\n")
@@ -121,49 +126,93 @@ func (r *Runner) RunAllTestSets() {
 func (r *Runner) ExecuteTestCase(tc TestCase, clients map[string]*Client) {
 	log.Printf("[Runner] Executing %d transactions for Set %d...", len(tc.Transactions), tc.SetNumber)
 
-    // Group transactions by client (sender)
-    clientTxMap := make(map[string][]TestTransaction)
-    for _, tx := range tc.Transactions {
-        clientTxMap[tx.Sender] = append(clientTxMap[tx.Sender], tx)
-    }
+    batches := r.splitTransactionsByLF(tc.Transactions)
 
-    var wg sync.WaitGroup
-
-	for clientName, txList := range clientTxMap {
-        client, ok := clients[clientName]
-        if !ok {
-            log.Printf("[Runner] Warning: No client found with name '%s'. Skipping.", clientName)
-            continue
-        }
-
-        wg.Add(1)
-        go func(c *Client, transactions []TestTransaction, cName string) {
-            defer wg.Done()
-
-            // Execute this client's transactions SERIALLY
-            for i, tx := range transactions {
-                log.Printf("[Runner] ---> Sending Tx %d/%d: (%s -> %s, $%d) via Client %s",
-                    i+1, len(transactions), tx.Sender, tx.Receiver, tx.Amount, cName)
-
-                c.SendTransaction(Transaction{
-					Sender: tx.Sender,	
-					Receiver: tx.Receiver,	
-					Amount: int32(tx.Amount),	
-				})
-
-                // Small delay between this client's transactions
-                // time.Sleep(20 * time.Millisecond)
+    for _, batch := range batches {
+        if batch.isLeaderFailure {
+            r.ExecuteLeaderFailure()
+        } else {
+            // Group transactions by client (sender)
+            clientTxMap := make(map[string][]TestTransaction)
+            for _, tx := range batch.transactions {
+                clientTxMap[tx.Sender] = append(clientTxMap[tx.Sender], tx)
             }
 
-            log.Printf("[Runner] Client %s completed all %d transactions for Set %d", 
-                cName, len(transactions), tc.SetNumber)
-        }(client, txList, clientName)
+            var wg sync.WaitGroup
+
+            for clientName, txList := range clientTxMap {
+                client, ok := clients[clientName]
+                if !ok {
+                    log.Printf("[Runner] Warning: No client found with name '%s'. Skipping.", clientName)
+                    continue
+                }
+
+                wg.Add(1)
+                go func(c *Client, transactions []TestTransaction, cName string) {
+                    defer wg.Done()
+
+                    // Execute this client's transactions SERIALLY
+                    for i, tx := range transactions {
+                        log.Printf("[Runner] ---> Sending Tx %d/%d: (%s, %s, %d) via Client %s",
+                            i+1, len(transactions), tx.Sender, tx.Receiver, tx.Amount, cName)
+
+                        c.SendTransaction(Transaction{
+                            Sender: tx.Sender,	
+                            Receiver: tx.Receiver,	
+                            Amount: int32(tx.Amount),	
+                        })
+
+                        // Small delay between this client's transactions
+                        // time.Sleep(20 * time.Millisecond)
+                    }
+
+                    log.Printf("[Runner] Client %s completed all %d transactions for Set %d", 
+                        cName, len(transactions), tc.SetNumber)
+                }(client, txList, clientName)
+            }
+
+            // WAIT for all clients to finish their transactions
+            wg.Wait()
+        }
     }
 
-    // WAIT for all clients to finish their transactions
-    wg.Wait()
+    
 
     log.Printf("[Runner] Finished all transactions for Set %d.", tc.SetNumber)
+}
+
+func (r *Runner) splitTransactionsByLF(transactions []TestTransaction) []TransactionBatch {
+    var batches []TransactionBatch
+    currentBatch := []TestTransaction{}
+
+    for _, tx := range transactions {
+        if tx.IsLeaderFailure {
+            // Save current batch and add LF as separate batch
+            if len(currentBatch) > 0 {
+                batches = append(batches, TransactionBatch{
+                    transactions:    currentBatch,
+                    isLeaderFailure: false,
+                })
+                currentBatch = nil
+            }
+            
+            batches = append(batches, TransactionBatch{
+                isLeaderFailure: true,
+            })
+        } else {
+            currentBatch = append(currentBatch, tx)
+        }
+    }
+
+    if len(currentBatch) > 0 {
+        batches = append(batches, TransactionBatch{
+            transactions:    currentBatch,
+            isLeaderFailure: false,
+        })
+        currentBatch = nil
+    }
+    
+    return batches
 }
 
 
@@ -176,7 +225,7 @@ func (r *Runner) showInteractiveMenu() {
         fmt.Println("         INTERACTIVE MENU")
         fmt.Println("========================================")
         // fmt.Println("1. PrintLog")
-        // fmt.Println("2. PrintDB ")
+        fmt.Println("2. PrintBalance ")
         // fmt.Println("3. PrintStatus (single sequence number)")
         fmt.Println("4. PrintStatus (all sequence numbers)")
         // fmt.Println("5. PrintView")
@@ -193,8 +242,12 @@ func (r *Runner) showInteractiveMenu() {
         switch input {
         // case "1":
         //     r.PrintLogsForAllNodes()
-        // case "2":
-        //     r.PrintDBForAllNodes()
+        case "2":
+                fmt.Print("Enter sequence number: ")
+            seqInput, _ := reader.ReadString('\n')
+            seqInput = strings.TrimSpace(seqInput)
+
+            r.PrintBalanceAll(seqInput)
         // case "3":
         //     fmt.Print("Enter sequence number: ")
         //     seqInput, _ := reader.ReadString('\n')
@@ -222,6 +275,24 @@ func (r *Runner) showInteractiveMenu() {
         default:
             fmt.Println("Invalid choice. Please enter 1-9.")
         }
+    }
+}
+
+
+func (r *Runner) ExecuteLeaderFailure(){
+    leaderId := r.localClients["B"].leaderId
+    log.Printf("[Runner] Sending LF command to Node=%d",leaderId)
+
+    client, exists := r.nodeClients[leaderId]
+    if !exists {
+        log.Printf("[Runner] No connection to node %d", leaderId)
+        return
+    }
+
+    _, err := client.FailNode(context.Background(),  &emptypb.Empty{})
+
+    if err != nil {
+        log.Printf("[Runner] Failed to send FAIL signal for node %d: %v", leaderId, err)
     }
 }
 
@@ -258,6 +329,22 @@ func (r *Runner) PrintStatusAll() {
         }
 
         _, err := client.PrintAcceptLog(context.Background(),  &emptypb.Empty{})
+
+        if err != nil {
+            log.Printf("[Runner] Failed to print log for node %d: %v", nodeCfg.NodeId, err)
+        }
+    }
+}
+
+func (r *Runner) PrintBalanceAll(clientName string){
+    for _, nodeCfg := range getNodeCluster() {
+        client, exists := r.nodeClients[int32(nodeCfg.NodeId)]
+        if !exists {
+            log.Printf("[Runner] No connection to node %d", nodeCfg.NodeId)
+            continue
+        }
+
+        _, err := client.PrintBalance(context.Background(),  &pb.PrintBalanceReq{ClientName: clientName})
 
         if err != nil {
             log.Printf("[Runner] Failed to print log for node %d: %v", nodeCfg.NodeId, err)

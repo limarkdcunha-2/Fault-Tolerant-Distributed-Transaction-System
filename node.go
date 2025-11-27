@@ -6,6 +6,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math/rand"
@@ -37,6 +39,14 @@ const (
 	PhaseExecuted				  
 )
 
+type LogEntryStatus string
+
+const (
+    LogEntryPresent LogEntryStatus = "PRESENT"
+    LogEntryDeleted LogEntryStatus = "DELETED"
+)
+
+
 
 type LogEntry struct {
 	mu sync.Mutex
@@ -46,6 +56,7 @@ type LogEntry struct {
 	AcceptedMessages map[int32] *pb.AcceptedMessage
 	AcceptCount int32
 	Phase Phase
+	Status LogEntryStatus
 }
 
 type PrepareLog struct {
@@ -109,6 +120,11 @@ type Node struct {
 	muStatus sync.RWMutex
     status   NodeStatus
 
+	muCheckpoint sync.RWMutex
+	checkpointInterval int32
+	latestCheckpointMessage *pb.CheckpointMessage
+	lastStableSnapshot     *pebble.Snapshot
+
 	peers map[int32]pb.MessageServiceClient
 
 	muConn sync.Mutex
@@ -143,6 +159,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		lastExecSeqNo:0,
 		inLeaderElection:false,
 		isLeaderKnown:false,
+		checkpointInterval:10,
 		// state:make(map[string]int32),
 		acceptLog:make(map[int32]*LogEntry),
 		peers: make( map[int32]pb.MessageServiceClient),
@@ -339,4 +356,23 @@ func (node *Node) getConnForClient(targetClientId int32) (pb.ClientServiceClient
 
 	node.clientConns[targetClientId] = conn
 	return pb.NewClientServiceClient(conn), conn
+}
+
+
+func (node *Node) computeStateDigest() (string, error) {
+	iter,_ := node.state.NewIter(nil)
+    defer iter.Close()
+
+	hasher := sha256.New()
+
+    for iter.First(); iter.Valid(); iter.Next() {
+        if _, err := hasher.Write(iter.Key()); err != nil {
+            return "", err
+        }
+        if _, err := hasher.Write(iter.Value()); err != nil {
+            return "", err
+        }
+    }
+
+    return hex.EncodeToString(hasher.Sum(nil)), nil
 }

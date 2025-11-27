@@ -11,6 +11,7 @@ import (
 	"log"
 	pb "transaction-processor/message"
 
+	"github.com/cockroachdb/pebble"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -143,6 +144,7 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 		AcceptedMessages: acceptedMessages,
 		AcceptCount: acceptCount,
 		Phase: PhaseAccepted,
+		Status: LogEntryPresent,
 	}
 
 	node.muLog.Lock()
@@ -247,6 +249,8 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 				}
 
 				existingEntry.mu.Unlock()
+				
+				node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
 
 				// Impt: Start timer if not already running
 				if !node.livenessTimer.IsRunning(){
@@ -263,8 +267,9 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 					Request: existingEntry.Request,
 					NodeId: node.nodeId,
 				}
-
 				existingEntry.mu.Unlock()
+
+				node.markRequestPending(acceptedMessage.Request.ClientId, acceptedMessage.Request.Timestamp)
 
 				// Impt: Start timer if not already running
 				if !node.livenessTimer.IsRunning(){
@@ -283,6 +288,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
         Ballot:        msg.Ballot,
         Request:      msg.Request,
         Phase:       PhaseAccepted,
+		Status: LogEntryPresent,
     }
 	node.acceptLog[msg.SequenceNum] = newEntry
 	node.muLog.Unlock()
@@ -322,15 +328,15 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
         return &emptypb.Empty{}, nil
     }
 
-	log.Printf("[Node %d] [ACCEPTED] Received from Node %d | Seq=%d  | ballot round=%d",
-		node.nodeId,msg.NodeId, msg.SequenceNum,msg.Ballot.RoundNumber)
+	log.Printf("[Node %d] [ACCEPTED] Received for  Seq=%d  | from Node %d | ballot round=%d",
+		node.nodeId,msg.SequenceNum,msg.NodeId, msg.Ballot.RoundNumber)
 
 	node.muLog.Lock()
 
-	log.Printf("[Node %d] is accept log nil=%v",node.nodeId,node.acceptLog == nil)
-	if node.acceptLog != nil {
-		log.Printf("[Node %d] is accept log len=%d",node.nodeId,len(node.acceptLog))
-	}
+	// log.Printf("[Node %d] is accept log nil=%v",node.nodeId,node.acceptLog == nil)
+	// if node.acceptLog != nil {
+	// 	log.Printf("[Node %d] is accept log len=%d",node.nodeId,len(node.acceptLog))
+	// }
 
 	entry, exists := node.acceptLog[msg.SequenceNum]
 
@@ -341,7 +347,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 		return &emptypb.Empty{}, nil
 	}
 
-	log.Printf("[Node %d] Entry exists",node.nodeId)
+	// log.Printf("[Node %d] Entry exists",node.nodeId)
 
 	entry.mu.Lock()
 	node.muLog.Unlock()
@@ -357,7 +363,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 		return &emptypb.Empty{}, nil
 	}
 	
-	log.Printf("[Node %d] Ballot check complete",node.nodeId)
+	// log.Printf("[Node %d] Ballot check complete",node.nodeId)
 
 	// 3. Quorum already reached so no need for new message
 	if entry.Phase >= PhaseCommitted {
@@ -367,7 +373,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
         return &emptypb.Empty{}, nil
     }
 
-	log.Printf("[Node %d] Quorum reach check complete",node.nodeId)
+	// log.Printf("[Node %d] Quorum reach check complete",node.nodeId)
 
 	// 4. Check if already counted message from this node
 	if _, exists := entry.AcceptedMessages[msg.NodeId]; exists {
@@ -376,12 +382,12 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 		return &emptypb.Empty{}, nil
 	}
 
-	log.Printf("[Node %d] All checks completed",node.nodeId)
+	// log.Printf("[Node %d] All checks completed",node.nodeId)
 
 	entry.AcceptedMessages[msg.NodeId] = msg
-	log.Printf("[Node %d] Inserted accepted msg",node.nodeId)
+	// log.Printf("[Node %d] Inserted accepted msg",node.nodeId)
 	entry.AcceptCount = int32(len(entry.AcceptedMessages))
-	log.Printf("[Node %d] Accepted Count: %d",node.nodeId,entry.AcceptCount)
+	// log.Printf("[Node %d] Accepted Count: %d",node.nodeId,entry.AcceptCount)
 
 	threshold := node.f + 1
 
@@ -476,6 +482,7 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 			Ballot: msg.Ballot,
 			Request: msg.Request,
 			Phase: PhaseCommitted,
+			Status: LogEntryPresent,
 		}
 		node.acceptLog[msg.SequenceNum] = newEntry
 
@@ -522,7 +529,7 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 	return &emptypb.Empty{}, nil
 }
 
-func (node *Node) executeInOrder(shouldSendReply bool) {
+func (node *Node) executeInOrder(isLeader bool) {
     node.muExec.Lock()
     defer node.muExec.Unlock()
 
@@ -604,10 +611,41 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 				}
 
 				// Check if we should create a checkpoint
-				// if nextSeq % node.checkpointInterval == 0{
-				// 	stateDigest := node.computeStateDigest()
-				// 	go node.createAndBroadcastCheckpoint(nextSeq,stateDigest,entry.View)
-				// }
+				if (nextSeq) % node.checkpointInterval == 0 && isLeader {
+					log.Printf("[Node %d] Seq=%d satifies checkpointing interval",node.nodeId,nextSeq)
+					stateDigest,err := node.computeStateDigest()
+					log.Printf("[Node %d] Seq=%d state digest computation complete",node.nodeId,nextSeq)
+
+					if err == nil {
+						node.muCheckpoint.Lock()
+						// Storing last stable state snapshot to send during catchup request
+						if node.lastStableSnapshot != nil {
+							node.lastStableSnapshot.Close()
+						}
+						node.lastStableSnapshot = node.state.NewSnapshot()
+						log.Printf("[Node %d] Seq=%d snapshot installation complete",node.nodeId,nextSeq)
+
+						msg := &pb.CheckpointMessage{
+							SequenceNum: nextSeq,
+							Digest: stateDigest,
+							NodeId: node.nodeId,
+						}
+						
+						// Log highest checkpointing message
+						node.latestCheckpointMessage = msg
+						log.Printf("[Node %d] Seq=%d latest checkpoint message updated",node.nodeId,nextSeq)
+						node.muCheckpoint.Unlock()
+
+						go node.broadcastCheckpointMessage(msg)
+						
+						// Spawning this in go rotuntine here seems little risky
+						// But since this is for past sequece numbers dont think there should be an issue
+						// Since only checkpointing activity will be present for these sequence numbers
+						go node.garbageCollectBeforeCheckpoint(nextSeq)
+					} else {
+						log.Printf("[Node %d] Error in computing state digest at seq=%d error=%v",node.nodeId,nextSeq,err)
+					}
+				}
 
 				node.muState.Unlock()
 
@@ -615,7 +653,7 @@ func (node *Node) executeInOrder(shouldSendReply bool) {
 				
 				log.Printf("[Node %d] EXECUTED: Seq=%d successfully. Status=%s", node.nodeId, entry.SequenceNum, status)
 
-				if shouldSendReply {
+				if isLeader {
 					go node.sendReplyToClient(reply)
 				}
 			}
@@ -931,6 +969,7 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
                 Phase:       PhaseAccepted,
 				AcceptedMessages:newAcceptMsgLog,
 				AcceptCount:1,
+				Status: LogEntryPresent,
             }
         } else {
 			entry.mu.Lock()
@@ -1161,6 +1200,236 @@ func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage){
 		go node.sendAcceptedMessage(acceptedMsg)
 	}
 }
+
+
+func(node *Node) broadcastCheckpointMessage(msg *pb.CheckpointMessage){
+	allNodes := getAllNodeIDs()
+
+	log.Printf("[Node %d] Broadcasting CHECKPOINT for seq=%d", 
+                node.nodeId, msg.SequenceNum)
+
+	for _, nodeId := range allNodes {
+ 		if nodeId == node.nodeId {
+            continue
+        }
+
+		peerClient, ok := node.peers[nodeId]
+        if !ok {
+            log.Printf("[Node %d] ERROR: No peer client connection found for Node %d. Skipping CHECKPOINT broadcast.", 
+                node.nodeId, nodeId)
+            continue
+        }
+
+		go func(id int32, client pb.MessageServiceClient) {
+            _, err := client.HandleCheckpoint(context.Background(), msg)
+            
+            if err != nil {
+                log.Printf("[Node %d] FAILED to send CHECKPOINT for seq=%d to Node %d: %v", 
+                    node.nodeId, msg.SequenceNum, id, err)
+            }
+        }(nodeId, peerClient)
+	}
+}
+
+
+func(node *Node) HandleCheckpoint(ctx context.Context,msg *pb.CheckpointMessage) (*emptypb.Empty, error) {
+	if !node.isActive() {
+		log.Printf("[Node %d] Inactive dropping CHECKPOINT message",node.nodeId)
+        return &emptypb.Empty{}, nil
+    }
+
+	log.Printf("[Node %d]: Received CHECKPOINT from Node %d, seq=%d, digest=%s", 
+        node.nodeId, msg.NodeId, msg.SequenceNum, msg.Digest[:16])
+
+	// 1. Store checkpoint message
+	node.muCheckpoint.Lock()
+	if node.latestCheckpointMessage == nil {
+		node.latestCheckpointMessage = msg;
+	} else if (msg.SequenceNum > node.latestCheckpointMessage.SequenceNum) {
+		node.latestCheckpointMessage = msg;
+	} else if(msg.SequenceNum < node.latestCheckpointMessage.SequenceNum){
+		log.Printf("[Node %d] Received stale CHECKPOINT message with seq=%d",node.nodeId,msg.SequenceNum)
+
+		node.muCheckpoint.Unlock()
+		return &emptypb.Empty{}, nil
+	}
+	node.muCheckpoint.Unlock()
+
+	node.muExec.Lock()
+	lastExecSeq := node.lastExecSeqNo
+	node.muExec.Unlock()
+
+	if msg.SequenceNum > lastExecSeq {
+		log.Printf("[Node %d] Initiating request for state transfer for seq=%d",node.nodeId,msg.SequenceNum)
+		go node.requestStateFromLeader(msg.SequenceNum,msg.NodeId)
+	} else{
+		go node.garbageCollectBeforeCheckpoint(msg.SequenceNum)
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+func (node *Node) garbageCollectBeforeCheckpoint(stableSeq int32) {
+	log.Printf("[Node %d] Seq=%d garbage collecting start",node.nodeId,stableSeq)
+
+    node.muLog.Lock()
+    defer node.muLog.Unlock()
+    
+    markedCount := 0
+    for seq, entry := range node.acceptLog {
+        if seq < stableSeq {
+            entry.mu.Lock()
+            entry.Status = LogEntryDeleted
+            entry.mu.Unlock()
+            markedCount++
+        }
+    }
+    
+    log.Printf("Node %d: Marked %d log entries as DELETED before seq=%d", 
+        node.nodeId, markedCount, stableSeq)
+}
+
+func (node *Node) requestStateFromLeader(seq int32,leaderId int32) {
+	req := &pb.StateTranserRequest{
+		NodeId: node.nodeId,
+		TargetSeq: seq,
+	}
+
+	_,err := node.peers[leaderId].MakeStateTransferRequest(context.Background(),req)
+
+	if err != nil {
+		log.Printf("[Node %d] Failed to send to state transfer request to leader",node.nodeId)
+	} else {
+		log.Printf("[Node %d] Successfully sent state transfer request to leader",node.nodeId)
+	}
+}
+
+func (node *Node) MakeStateTransferRequest(ctx context.Context, req *pb.StateTranserRequest) (*emptypb.Empty, error) {
+    if !node.isActive() {
+        log.Printf("[Node %d] Inactive dropping STATE TRANSFER request",node.nodeId)
+        return &emptypb.Empty{}, nil
+    }
+
+	log.Printf("[Node %d] Received State Transfer Request from Node %d", node.nodeId, req.NodeId)
+	
+	node.muCheckpoint.RLock()
+	lastStableCheckpoint := node.latestCheckpointMessage.SequenceNum
+	node.muCheckpoint.RUnlock()
+
+	// Should not happen as it is leader
+	if req.TargetSeq < lastStableCheckpoint{
+		log.Printf("[Node %d] Cant send state as I am myself lagging",node.nodeId)
+		return &emptypb.Empty{}, nil
+	}
+
+    go node.sendStateSnapshot(req.NodeId)
+
+    return &emptypb.Empty{}, nil
+}
+
+func (node *Node) sendStateSnapshot(targetNodeId int32) {
+	log.Printf("[Node %d] Preparing snapshot for Node %d", node.nodeId, targetNodeId)
+
+    node.muCheckpoint.RLock()
+    
+    if node.lastStableSnapshot == nil {
+        node.muCheckpoint.RUnlock()
+        log.Printf("[Node %d] ERROR: No stable snapshot to send!", node.nodeId)
+        return
+    }
+
+	snapshotSeq := node.latestCheckpointMessage.SequenceNum
+	snapshotMap := make(map[string]int32)
+
+	iter,err := node.lastStableSnapshot.NewIter(nil)
+
+	node.muCheckpoint.RUnlock()
+
+	if err != nil {
+		log.Printf("[Node %d] Error in iterating snapshot",node.nodeId)
+		return
+	}
+
+    for iter.First(); iter.Valid(); iter.Next() {
+        balance, _ := deserializeBalance(iter.Value())
+        snapshotMap[string(iter.Key())] = balance
+    }
+    iter.Close()
+
+	response := &pb.StateTransferResponse{
+        LatestCheckpointSeqNum: snapshotSeq, 
+        State:                  snapshotMap,
+	}
+
+	log.Printf("[Node %d] Pushing STABLE Snapshot (Seq: %d) to Node %d", node.nodeId, snapshotSeq, targetNodeId)
+    _, err = node.peers[targetNodeId].HandleStateTransferResponse(context.Background(), response)
+
+    if err != nil {
+        log.Printf("[Node %d] Failed to send state snapshot to node=%d",node.nodeId,targetNodeId)
+    }
+}
+
+func (node *Node) HandleStateTransferResponse(ctx context.Context,response *pb.StateTransferResponse)  (*emptypb.Empty, error){
+	node.muExec.Lock()
+	defer node.muExec.Unlock()
+
+	if response.LatestCheckpointSeqNum <= node.lastExecSeqNo {
+        log.Printf("[Node %d] IGNORING Snapshot (Seq %d) <= Current Exec (Seq %d)", 
+            node.nodeId, response.LatestCheckpointSeqNum, node.lastExecSeqNo)
+        return &emptypb.Empty{}, nil
+    }
+
+	start := []byte("account:")
+    end := []byte("account;")
+
+	node.muState.Lock()
+
+	if err := node.state.DeleteRange(start, end, pebble.NoSync); err != nil {
+		node.muState.Unlock()
+
+        log.Printf("[Node %d] CRITICAL: Failed to wipe DB: %v", node.nodeId, err)
+        return &emptypb.Empty{}, nil
+    }
+
+	batch := node.state.NewBatch()
+    defer batch.Close()
+
+	for name, balance := range response.State {
+        val, _ := serializeBalance(balance)
+        if err := batch.Set(accountKey(name), val, nil); err != nil {
+			node.muState.Unlock()
+
+			log.Printf("[Node %d] Error while setting key in state repair",node.nodeId)
+            return &emptypb.Empty{}, nil
+        }
+    }
+
+	if err := batch.Commit(pebble.NoSync); err != nil {
+		node.muState.Unlock()
+
+        log.Printf("[Node %d] CRITICAL: Failed to commit snapshot: %v", node.nodeId, err)
+        return &emptypb.Empty{}, fmt.Errorf("commit failed")
+    }
+
+	node.muState.Unlock()
+
+	node.lastExecSeqNo = response.LatestCheckpointSeqNum
+
+	go node.garbageCollectBeforeCheckpoint(response.LatestCheckpointSeqNum)
+
+	log.Printf("[Node %d] STATE TRANSFER COMPLETE. Jumped to Seq %d.", 
+        node.nodeId, response.LatestCheckpointSeqNum)
+
+	if node.hasPendingWork() {
+		log.Printf("[Node %d] Pending work present restarting liveness timer",node.nodeId)
+		node.livenessTimer.Restart()
+	} else {
+		log.Printf("[Node %d] No pending work present stopping liveness timer",node.nodeId)
+		node.livenessTimer.Stop()
+	}
+
+	return &emptypb.Empty{},nil
+} 
 
 
 func (node *Node) PrintAcceptLog(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {

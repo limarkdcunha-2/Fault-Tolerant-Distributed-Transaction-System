@@ -136,7 +136,8 @@ func (client *Client) SendTransaction(tx Transaction) string {
         // }
 
 		attemptCount++
-        log.Printf("[Client %d] Write attempt #%d for request %s", client.id, attemptCount, reqKey)
+        log.Printf("[Client %d] Write attempt #%d for request (%s, %s, %d)", client.id, attemptCount, 
+		req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
 		client.muLeader.RLock()
 		leaderId := client.leaderId
@@ -212,7 +213,8 @@ func (client *Client) broadcastToAllNodes(req *pb.ClientRequest) {
 			if err != nil {
 				log.Printf("[Client %d] Failed to broadcast to node %d: %v", client.id, nid, err)
 			} else {
-				log.Printf("[Client %d] Broadcasted request to node %d", client.id, nid)
+				log.Printf("[Client %d] Broadcasted request (%s, %s, %d) to node %d", client.id,
+				req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount, nid)
 			}
 		}(nodeId)
 	}

@@ -78,6 +78,22 @@ message NewViewMessage {
   int32 MaxSeq = 5;
 }
 
+message CheckpointMessage{
+  int32 SequenceNum = 1;
+  string Digest = 2;
+  int32 NodeId = 3;
+}
+
+message StateTranserRequest{
+  int32 NodeId = 1;
+  int32 TargetSeq = 2;
+}
+
+message StateTransferResponse {
+  int32 LatestCheckpointSeqNum = 1;
+  map<string, int32> State = 2;
+}
+
 message PrintBalanceReq {
   string ClientName = 1;
 }
@@ -91,6 +107,9 @@ service MessageService {
   rpc HandlePrepare(PrepareMessage) returns (google.protobuf.Empty);
   rpc HandlePromise(PromiseMessage) returns (google.protobuf.Empty);
   rpc HandleNewView(NewViewMessage) returns (google.protobuf.Empty);
+  rpc HandleCheckpoint(CheckpointMessage) returns (google.protobuf.Empty);
+  rpc MakeStateTransferRequest(StateTranserRequest) returns (google.protobuf.Empty);
+  rpc HandleStateTransferResponse(StateTransferResponse) returns (google.protobuf.Empty);
 
   // Project helpers
   rpc PrintAcceptLog(google.protobuf.Empty) returns (google.protobuf.Empty);

@@ -58,11 +58,11 @@ type Client struct {
 }
 
 
-func NewClient(id int, name string, port int) (*Client, error) {
+func NewClient(port int) (*Client, error) {
 	
 	return &Client{
-		id:          id,
-		name:        name,
+		// id:          id,
+		// name:        name,
 		leaderId:      1,
 		port:        port,
 		serverConns: make(map[int32]*grpc.ClientConn),
@@ -88,26 +88,9 @@ func (client *Client) startGrpcServer() error {
 			log.Fatalf("[Client %s] gRPC serve error: %v", client.name, err)
 		}
 	}()
-
-	// small warm-up pause tolerable
-	// time.Sleep(10 * time.Millisecond)
 	return nil
 }
 
-func buildClients() map[string]*Client {
-	clients := make(map[string]*Client)
-
-    for _, cfg := range getClientCluster() {
-		newClient,err := NewClient(cfg.ClientId, cfg.ClientName,cfg.Port)
-        if err != nil {
-            log.Fatalf("Failed to create client %s: %v", cfg.ClientName, err)
-        }
-
-        clients[cfg.ClientName] = newClient
-    }
-
-	return clients
-}
 
 
 func (client *Client) SendTransaction(tx Transaction) string {

@@ -36,6 +36,8 @@ func parseTestCases(filePath string) (map[int]TestCase, error) {
 	// Regex to parse transactions like "(A, J, 3)" and node lists like "[n1, n2, n3]"
 	txRegex := regexp.MustCompile(`\((?P<sender>\w+),\s*(?P<receiver>\w+),\s*(?P<amount>\d+)\)`)
 	nodeRegex := regexp.MustCompile(`n(\d+)`)
+	failRegex := regexp.MustCompile(`^F\((\d+)\)$`)
+	recoverRegex := regexp.MustCompile(`^R\((\d+)\)$`)
 
 	for {
 		record, err := reader.Read()
@@ -69,9 +71,21 @@ func parseTestCases(filePath string) (map[int]TestCase, error) {
 		// Column 1: Transactions
 		if currentTestCase != nil && record[1] != "" {
 			txStr := strings.TrimSpace(record[1])
-			if txStr == "LF" {
-				// Handle Leader Failure command
-				currentTestCase.Transactions = append(currentTestCase.Transactions, TestTransaction{IsLeaderFailure: true})
+
+			if matches := failRegex.FindStringSubmatch(txStr); len(matches) > 0 {
+				// Handle F(n)
+				nodeID, _ := strconv.Atoi(matches[1])
+				currentTestCase.Transactions = append(currentTestCase.Transactions, TestTransaction{
+					IsFailNode:   true,
+					TargetNodeId: nodeID,
+				})
+			} else if matches := recoverRegex.FindStringSubmatch(txStr); len(matches) > 0 {
+				// Handle R(n)
+				nodeID, _ := strconv.Atoi(matches[1])
+				currentTestCase.Transactions = append(currentTestCase.Transactions, TestTransaction{
+					IsRecoverNode: true,
+					TargetNodeId:  nodeID,
+				})
 			} else {
 				// Handle regular transaction
 				matches := txRegex.FindStringSubmatch(txStr)
@@ -98,8 +112,8 @@ func parseTestCases(filePath string) (map[int]TestCase, error) {
 
 
 func getAllTestCases() map[int]TestCase {
-	// filePath := "test1.csv"
-    filePath := "CSE535-F25-Project-1-Testcases.csv"
+	filePath := "test1.csv"
+    // filePath := "CSE535-F25-Project-1-Testcases.csv"
     
 	log.Printf("Parsing test cases from: %s\n", filePath)
 

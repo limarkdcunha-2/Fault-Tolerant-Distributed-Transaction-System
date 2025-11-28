@@ -19,12 +19,13 @@ type Transaction struct{
 }
 
 type TestTransaction struct {
-	IsLeaderFailure bool   // "LF command"
-	Sender  string 
-	Receiver string 
-	Amount  int  
+	IsFailNode      bool  
+	IsRecoverNode   bool 
+	TargetNodeId    int
+	Sender          string 
+	Receiver        string 
+	Amount          int  
 }
-
 type TestCase struct {
     SetNumber      int
     Transactions   []TestTransaction

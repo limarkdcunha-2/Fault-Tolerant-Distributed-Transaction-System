@@ -14,7 +14,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 	pb "transaction-processor/message"
 
 	"google.golang.org/grpc"
@@ -26,14 +25,19 @@ type Runner struct {
 	nodeConfigs  []NodeConfig
 	testCases    map[int]TestCase
 	nodeClients  map[int32]pb.MessageServiceClient
-	localClients map[string]*Client
+	client *Client
+}
+
+type TransactionBatch struct {
+	transactions    []TestTransaction
+	isControl    bool
 }
 
 func NewRunner() *Runner {
 	runner:= &Runner{
         nodeConfigs: getNodeCluster(),
         nodeClients: make(map[int32]pb.MessageServiceClient),
-        localClients: make(map[string]*Client),
+        // localClients: make(map[string]*Client),
 	}
 
     for _, nodeConfig := range runner.nodeConfigs {
@@ -67,23 +71,15 @@ func (r *Runner) RunAllTestSets() {
         return
     }
 
-    // 1. Build all 10 clients
-    clients := buildClients()
-    for _, c := range clients {
-		// start local client gRPC server so replicas can call HandleReply
-		if err := c.startGrpcServer(); err != nil {
-			log.Fatalf("[Runner] client %s failed to start server: %v", c.name, err)
-		}
-		// keep clients map for use by ExecuteTestCase
-		r.localClients[c.name] = c
-	}
-
-    log.Printf("[Runner] Loaded config for %d nodes and %d clients\n", len(r.nodeConfigs), len(r.localClients))
-
+    // 1. Build client
+    client,_ := NewClient(9000)
+    r.client = client
+    r.client.startGrpcServer()
+    
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        if setNum > 2 {
-            break
-        }
+        // if setNum > 3 {
+        //     break
+        // }
 
         tc := r.testCases[setNum]
         fmt.Printf("\n=========================================\n")
@@ -96,14 +92,15 @@ func (r *Runner) RunAllTestSets() {
         //     r.ResetAllClients(r.localClients)
         // }
 
-        r.UpdateActiveNodes(tc.LiveNodes)
+        // r.UpdateActiveNodes(tc.LiveNodes)
 
         // Execute transactions
-        start := time.Now()
-        r.ExecuteTestCase(tc,r.localClients)
-        end := time.Since(start)
+        // start := time.Now()
+        // need to spawn this in go routine
+        r.ExecuteTestCase(tc)
+        // end := time.Since(start)
 
-        log.Printf("[Runner] Total time elapsed %v",end)
+        // log.Printf("[Runner] Total time elapsed %v",end)
         
         r.showInteractiveMenu()
         // r.PrintStatusAll()
@@ -112,58 +109,84 @@ func (r *Runner) RunAllTestSets() {
     log.Printf("All test sets complete")
 
     // Client connection cleanup
-    for _, client := range clients {
-        client.closeAllConnections()
-    }
+    r.client.closeAllConnections()
     log.Println("[Runner] All sets complete.")
 }
 
-func (r *Runner) ExecuteTestCase(tc TestCase, clients map[string]*Client) {
+func (r *Runner) ExecuteTestCase(tc TestCase) {
 	log.Printf("[Runner] Executing %d transactions for Set %d...", len(tc.Transactions), tc.SetNumber)
 
-    // Group transactions by client (sender)
-    clientTxMap := make(map[string][]TestTransaction)
-    for _, tx := range tc.Transactions {
-        clientTxMap[tx.Sender] = append(clientTxMap[tx.Sender], tx)
-    }
+	batches := r.splitTransactionsIntoBatches(tc.Transactions)
 
-    var wg sync.WaitGroup
+   for _, batch := range batches {
+        if batch.isControl {
+            cmd := batch.transactions[0]
+			if cmd.IsFailNode {
+				log.Printf("[Runner] Executing Fail Node %d...", cmd.TargetNodeId)
+				r.FailNodeCommand(int32(cmd.TargetNodeId))
+			} else if cmd.IsRecoverNode {
+				log.Printf("[Runner] Executing Recover Node %d...", cmd.TargetNodeId)
+				r.RecoverNodeCommand(int32(cmd.TargetNodeId))
+			}
+        } else {
+            var wg sync.WaitGroup
 
-	for clientName, txList := range clientTxMap {
-        client, ok := clients[clientName]
-        if !ok {
-            log.Printf("[Runner] Warning: No client found with name '%s'. Skipping.", clientName)
-            continue
-        }
+            for i, tx := range batch.transactions {
+                wg.Add(1)
 
-        wg.Add(1)
-        go func(c *Client, transactions []TestTransaction, cName string) {
-            defer wg.Done()
+				// Launch a goroutine for EVERY transaction
+				go func(t TestTransaction, idx int) {
+					defer wg.Done()
 
-            // Execute this client's transactions SERIALLY
-            for i, tx := range transactions {
-                log.Printf("[Runner] ---> Sending Tx %d/%d: (%s -> %s, $%d) via Client %s",
-                    i+1, len(transactions), tx.Sender, tx.Receiver, tx.Amount, cName)
-
-                c.SendTransaction(Transaction{
-					Sender: tx.Sender,	
-					Receiver: tx.Receiver,	
-					Amount: int32(tx.Amount),	
-				})
-
-                // Small delay between this client's transactions
-                // time.Sleep(20 * time.Millisecond)
+					// Uses the single gateway client for everything
+                    log.Printf("[Runner] Sending transaction (%s, %s, %d)",t.Sender,t.Receiver,t.Amount)
+					go r.client.SendTransaction(Transaction{
+						Sender:   t.Sender,
+						Receiver: t.Receiver,
+						Amount:   int32(t.Amount),
+					})
+				}(tx, i)
             }
-
-            log.Printf("[Runner] Client %s completed all %d transactions for Set %d", 
-                cName, len(transactions), tc.SetNumber)
-        }(client, txList, clientName)
+            wg.Wait()
+        }
     }
-
-    // WAIT for all clients to finish their transactions
-    wg.Wait()
 
     log.Printf("[Runner] Finished all transactions for Set %d.", tc.SetNumber)
+}
+
+func (r *Runner) splitTransactionsIntoBatches(transactions []TestTransaction) []TransactionBatch {
+    var batches []TransactionBatch
+    currentBatch := []TestTransaction{}
+
+    for _, tx := range transactions {
+        if tx.IsFailNode || tx.IsRecoverNode {
+            // Save current batch and add LF as separate batch
+            if len(currentBatch) > 0 {
+				batches = append(batches, TransactionBatch{
+					transactions: currentBatch,
+					isControl:    false,
+				})
+				currentBatch = []TestTransaction{} // Start fresh
+			}
+
+			// 2. Add the control command as its own batch
+			batches = append(batches, TransactionBatch{
+				transactions: []TestTransaction{tx},
+				isControl:    true,
+			})
+        } else {
+            currentBatch = append(currentBatch, tx)
+        }
+    }
+
+    if len(currentBatch) > 0 {
+		batches = append(batches, TransactionBatch{
+			transactions: currentBatch,
+			isControl:    false,
+		})
+	}
+    
+    return batches
 }
 
 
@@ -176,7 +199,7 @@ func (r *Runner) showInteractiveMenu() {
         fmt.Println("         INTERACTIVE MENU")
         fmt.Println("========================================")
         // fmt.Println("1. PrintLog")
-        // fmt.Println("2. PrintDB ")
+        fmt.Println("2. PrintBalance ")
         // fmt.Println("3. PrintStatus (single sequence number)")
         fmt.Println("4. PrintStatus (all sequence numbers)")
         // fmt.Println("5. PrintView")
@@ -193,8 +216,12 @@ func (r *Runner) showInteractiveMenu() {
         switch input {
         // case "1":
         //     r.PrintLogsForAllNodes()
-        // case "2":
-        //     r.PrintDBForAllNodes()
+        case "2":
+                fmt.Print("Enter sequence number: ")
+            seqInput, _ := reader.ReadString('\n')
+            seqInput = strings.TrimSpace(seqInput)
+
+            r.PrintBalanceAll(seqInput)
         // case "3":
         //     fmt.Print("Enter sequence number: ")
         //     seqInput, _ := reader.ReadString('\n')
@@ -224,6 +251,36 @@ func (r *Runner) showInteractiveMenu() {
         }
     }
 }
+
+func (r *Runner) FailNodeCommand(targetNodeId int32){
+    client, exists := r.nodeClients[targetNodeId]
+    if !exists {
+        log.Printf("[Runner] No connection to node %d", targetNodeId)
+        return
+    }
+
+    _, err := client.FailNode(context.Background(),  &emptypb.Empty{})
+
+    if err != nil {
+        log.Printf("[Runner] Failed to send FAIL signal for node %d: %v", targetNodeId, err)
+    }
+}
+
+
+func (r *Runner) RecoverNodeCommand(targetNodeId int32){
+    client, exists := r.nodeClients[targetNodeId]
+    if !exists {
+        log.Printf("[Runner] No connection to node %d", targetNodeId)
+        return
+    }
+
+    _, err := client.RecoverNode(context.Background(),  &emptypb.Empty{})
+
+    if err != nil {
+        log.Printf("[Runner] Failed to send RECOVER signal for node %d: %v", targetNodeId, err)
+    }
+}
+
 
 func (r *Runner) UpdateActiveNodes(liveNodes []int) {
     for _, cfg := range r.nodeConfigs {
@@ -258,6 +315,22 @@ func (r *Runner) PrintStatusAll() {
         }
 
         _, err := client.PrintAcceptLog(context.Background(),  &emptypb.Empty{})
+
+        if err != nil {
+            log.Printf("[Runner] Failed to print log for node %d: %v", nodeCfg.NodeId, err)
+        }
+    }
+}
+
+func (r *Runner) PrintBalanceAll(clientName string){
+    for _, nodeCfg := range getNodeCluster() {
+        client, exists := r.nodeClients[int32(nodeCfg.NodeId)]
+        if !exists {
+            log.Printf("[Runner] No connection to node %d", nodeCfg.NodeId)
+            continue
+        }
+
+        _, err := client.PrintBalance(context.Background(),  &pb.PrintBalanceReq{ClientName: clientName})
 
         if err != nil {
             log.Printf("[Runner] Failed to print log for node %d: %v", nodeCfg.NodeId, err)

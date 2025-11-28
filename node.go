@@ -6,8 +6,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"math/rand"
@@ -125,18 +123,16 @@ type Node struct {
 	latestCheckpointMessage *pb.CheckpointMessage
 	lastStableSnapshot     *pebble.Snapshot
 
-	peers map[int32]pb.MessageServiceClient
+	muCluster sync.RWMutex
+	clusterId int32
+    clusterInfo map[int32]*ClusterInfo
 
-	muConn sync.Mutex
-	clientConns map[int32]*grpc.ClientConn
+	peers map[int32]pb.MessageServiceClient
+	clientSideGrpcClient pb.ClientServiceClient
 }	
 
 
 func NewNode(nodeId, portNo int32) (*Node, error) {
-	// nodeIdStr := strconv.Itoa(int(nodeId))
-	N := int32(len(getNodeCluster()))
-	f := (N - 1) / 2
-
 	myBallot := &pb.BallotNumber{
 		NodeId: nodeId,
 		RoundNumber: 0,
@@ -149,8 +145,6 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 
 	newNode :=  &Node{
 		nodeId: nodeId,
-		N:N,
-		f:f,
 		portNo: portNo,
 		myBallot: myBallot,
 		promisedBallotAccept:defaultPromisedBallot,
@@ -164,13 +158,12 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 			SequenceNum: 0,
 			Digest: "",
 		},	
-		// state:make(map[string]int32),
 		acceptLog:make(map[int32]*LogEntry),
 		peers: make( map[int32]pb.MessageServiceClient),
 		replies: make(map[string]*pb.ReplyMessage),
 		pendingRequests: make(map[string]bool),
-		clientConns:make(map[int32]*grpc.ClientConn),
 		requestsQueue:make([]*pb.ClientRequest, 0),
+		clusterInfo: make(map[int32]*ClusterInfo),
 	}
 
 	randomTime := time.Duration(rand.Intn(100)+100) * time.Millisecond
@@ -178,14 +171,39 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 
 	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)
 
+	newNode.muCluster.Lock()
+	newNode.clusterId = newNode.getMyClusterId()
+	newNode.muCluster.Unlock()
+
 	newNode.prepareLog = PrepareLog{
 		log: make([]*pb.PrepareMessage,0),
 		highestBallotPrepare: nil,
 	}
 
-	// Building peer connections
+	
+	newNode.buildClusterMap()
+
+	// Building gprc connections
+	newNode.buildPeerGrpcConnections()
+	newNode.registerClientSideGrpcConnection()
+
+	lenNodes := len(newNode.getAllClusterNodes())
+	newNode.N = int32(lenNodes)
+	newNode.f = (newNode.N  - 1) / 2
+
+	// TO DO make this shard size (3000) dynamic
+	if err := newNode.loadState(newNode.clusterId,int32(3000)); err != nil {
+        return nil, fmt.Errorf("failed to load initial state: %w", err)
+    }
+    log.Printf("[Node %d] State successfully loaded into memory.", newNode.nodeId)
+
+	return newNode,nil
+}
+
+func(node *Node) buildPeerGrpcConnections(){
+	// Building peer (grpc) connections
 	for _, nodeConfig := range getNodeCluster() {
-        if nodeConfig.NodeId == nodeId {
+        if nodeConfig.NodeId == node.nodeId {
             continue
         }
 
@@ -198,29 +216,40 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 
         client := pb.NewMessageServiceClient(conn)
 
-        newNode.peers[nodeConfig.NodeId] = client
+        node.peers[nodeConfig.NodeId] = client
     }
+}
 
-	// Loading state TO DO update with SQLlite
-	if err := newNode.loadState(); err != nil {
-        return nil, fmt.Errorf("failed to load initial state: %w", err)
+func(node *Node) buildClusterMap(){
+	node.muCluster.Lock()
+    defer node.muCluster.Unlock()
+
+	for _, nodeConfig := range getNodeCluster() {
+		info, exists := node.clusterInfo[nodeConfig.ClusterId]
+
+		if !exists {
+			info = &ClusterInfo{
+                ClusterId: nodeConfig.ClusterId,
+                NodeIds:   []int32{},
+                LeaderId:  0,
+            }
+
+			node.clusterInfo[nodeConfig.ClusterId] = info
+		}
+
+		info.NodeIds = append(info.NodeIds, nodeConfig.NodeId)
+	} 
+}
+
+func (node *Node) getMyClusterId() int32 {
+    for _, cfg := range getNodeCluster() {
+        if cfg.NodeId == node.nodeId {
+            return cfg.ClusterId
+        }
     }
-    log.Printf("[Node %d] State successfully loaded into memory.", newNode.nodeId)
-
-	return newNode,nil
+    log.Fatalf("[Node %d] FATAL: cannot find own ClusterId in getNodeCluster()", node.nodeId)
+    return -1
 }
-
-func makeRequestKey(clientId int32, timestamp *timestamppb.Timestamp) string {
-	return fmt.Sprintf("%d-%d", clientId, timestamp.AsTime().UnixNano())
-}
-
-func (node *Node) isLeader() bool {
-	node.muBallot.RLock()
-	defer node.muBallot.Unlock()
-
-	return node.promisedBallotAccept.NodeId == node.nodeId
-}
-
 
 func (node *Node) GetCachedReply(clientId int32, timestamp  *timestamppb.Timestamp) (*pb.ReplyMessage, bool) {
 	key := makeRequestKey(clientId, timestamp)
@@ -260,45 +289,6 @@ func (node *Node) markRequestPending(clientId int32, timestamp *timestamppb.Time
         node.nodeId, clientId)
 }
 
-func (node *Node) isBallotEqual(b1, b2 *pb.BallotNumber) bool {
-    if b1 == nil || b2 == nil {
-        return false 
-    }
-    return b1.RoundNumber == b2.RoundNumber && b1.NodeId == b2.NodeId
-}
-
-func (node *Node) isBallotGreaterThan(b1, b2 *pb.BallotNumber) bool {
-    if b1 == nil || b2 == nil {
-        return false
-    }
-    
-    if b1.RoundNumber > b2.RoundNumber {
-        return true
-    }
-    
-    if b1.RoundNumber == b2.RoundNumber && b1.NodeId > b2.NodeId {
-        return true
-    }
-    
-    return false
-}
-
-func (node *Node) isBallotLessThan(b1, b2 *pb.BallotNumber) bool {
-    if b1 == nil || b2 == nil {
-        return false
-    }
-
-    if b1.RoundNumber < b2.RoundNumber {
-        return true
-    }
-
-    if b1.RoundNumber == b2.RoundNumber && b1.NodeId < b2.NodeId {
-        return true
-    }
-
-    return false
-}
-
 func (node *Node) RecordReply(reply *pb.ReplyMessage) {
 	key := makeRequestKey(reply.ClientId, reply.ClientRequestTimestamp)
 
@@ -318,7 +308,6 @@ func (node *Node) removePendingRequest(clientId int32, timestamp *timestamppb.Ti
     log.Printf("Node %d: Removed PENDING request from client %d", node.nodeId, clientId)
 }
 
-
 func (node *Node) cacheReplyAndClearPending(reply *pb.ReplyMessage) {
     // Remove from pending
     node.removePendingRequest(reply.ClientId, reply.ClientRequestTimestamp)
@@ -326,57 +315,20 @@ func (node *Node) cacheReplyAndClearPending(reply *pb.ReplyMessage) {
    node.RecordReply(reply)
 }
 
-func (node *Node) requestsAreEqual(r1, r2 *pb.ClientRequest) bool {
-    return r1.ClientId == r2.ClientId && r1.Timestamp.AsTime().Equal(r2.Timestamp.AsTime())
-}
 
-func (node *Node) getConnForClient(targetClientId int32) (pb.ClientServiceClient, *grpc.ClientConn) {
-	node.muConn.Lock()
-	defer node.muConn.Unlock()
-
-	if conn, ok := node.clientConns[targetClientId]; ok && conn != nil {
-		return pb.NewClientServiceClient(conn), conn
+func (node *Node) registerClientSideGrpcConnection() {
+	if node.clientSideGrpcClient != nil {
+		return
 	}
 
-	var targetClient *ClientConfig
-	for _, config := range getClientCluster() {
-		if config.ClientId == int(targetClientId) {
-			targetClient = &config
-			break
-		}
-	}
-	if targetClient == nil {
-		log.Printf("[Node %d] Client configuration for ID %d not found.",node.nodeId , targetClientId)
-		return nil, nil
-	}
-
-	targetAddr := fmt.Sprintf(":%d", targetClient.Port)
+	// 9000 is port for client grpcserver
+	targetAddr := fmt.Sprintf(":%d", 9000)
 	conn, err := grpc.NewClient(targetAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
 	if err != nil {
-		log.Printf("[NOde %d] Failed to connect to client %d at %s: %v", node.nodeId, targetClientId, targetAddr, err)
-		return nil, nil
+		log.Printf("[Ndde %d] Failed to connect to client at %s: %v", node.nodeId, targetAddr, err)
+		return
 	}
 
-	node.clientConns[targetClientId] = conn
-	return pb.NewClientServiceClient(conn), conn
-}
-
-
-func (node *Node) computeStateDigest() (string, error) {
-	iter,_ := node.state.NewIter(nil)
-    defer iter.Close()
-
-	hasher := sha256.New()
-
-    for iter.First(); iter.Valid(); iter.Next() {
-        if _, err := hasher.Write(iter.Key()); err != nil {
-            return "", err
-        }
-        if _, err := hasher.Write(iter.Value()); err != nil {
-            return "", err
-        }
-    }
-
-    return hex.EncodeToString(hasher.Sum(nil)), nil
+	node.clientSideGrpcClient = pb.NewClientServiceClient(conn)
 }

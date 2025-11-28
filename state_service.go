@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/cockroachdb/pebble"
 )
@@ -110,27 +111,23 @@ func (node *Node) processTransaction(transaction Transaction) (bool, error) {
 }
 
 
-func loadInitialState() BankAccounts {
-    data := BankAccounts{
-		Accounts: []BankAccount{
-			{Name: "A", Balance: 10},
-			{Name: "B", Balance: 10},
-			{Name: "C", Balance: 10},
-			{Name: "D", Balance: 10},
-			{Name: "E", Balance: 10},
-			{Name: "F", Balance: 10},
-			{Name: "G", Balance: 10},
-			{Name: "H", Balance: 10},
-			{Name: "I", Balance: 10},
-			{Name: "J", Balance: 10},
-		},
-	}
-    
-    return data
+func loadInitialState(clusterId int32,shardSize int32) BankAccounts {
+    start := 1 + (clusterId-1) *shardSize
+    end := clusterId *shardSize
+
+    accounts := make([]BankAccount, 0, end-start+1)
+    for id := start; id <= end; id++ {
+        accounts = append(accounts, BankAccount{
+            Name:    strconv.FormatInt(int64(id), 10),
+            Balance: 10,
+        })
+    }
+
+    return BankAccounts{Accounts: accounts}
 }
 
 
-func (node *Node) loadState() error {
+func (node *Node) loadState(clusterId int32, shardSize int32) error {
     dbPath := fmt.Sprintf("state/node%d", node.nodeId)
 
     if err := os.MkdirAll("state", 0755); err != nil {
@@ -148,7 +145,7 @@ func (node *Node) loadState() error {
 
 
     log.Printf("[Node %d] Initializing new database with default accounts", node.nodeId)
-    initialData := loadInitialState()
+    initialData := loadInitialState(clusterId,shardSize)
     
     batch := newDB.NewBatch()
     defer batch.Close() 

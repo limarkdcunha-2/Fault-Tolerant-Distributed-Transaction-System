@@ -99,7 +99,7 @@ message StateTransferResponse {
 }
 
 message PrintBalanceReq {
-  string ClientName = 1;
+  string Datapoint = 1;
 }
 
 service MessageService {

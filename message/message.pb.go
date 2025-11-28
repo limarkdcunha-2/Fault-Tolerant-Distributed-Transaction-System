@@ -837,7 +837,7 @@ func (x *StateTransferResponse) GetState() map[string]int32 {
 
 type PrintBalanceReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientName    string                 `protobuf:"bytes,1,opt,name=ClientName,proto3" json:"ClientName,omitempty"`
+	Datapoint     string                 `protobuf:"bytes,1,opt,name=Datapoint,proto3" json:"Datapoint,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -872,9 +872,9 @@ func (*PrintBalanceReq) Descriptor() ([]byte, []int) {
 	return file_message_message_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *PrintBalanceReq) GetClientName() string {
+func (x *PrintBalanceReq) GetDatapoint() string {
 	if x != nil {
-		return x.ClientName
+		return x.Datapoint
 	}
 	return ""
 }
@@ -942,11 +942,9 @@ const file_message_message_proto_rawDesc = "" +
 	"\n" +
 	"StateEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"1\n" +
-	"\x0fPrintBalanceReq\x12\x1e\n" +
-	"\n" +
-	"ClientName\x18\x01 \x01(\tR\n" +
-	"ClientName2\xd0\a\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"/\n" +
+	"\x0fPrintBalanceReq\x12\x1c\n" +
+	"\tDatapoint\x18\x01 \x01(\tR\tDatapoint2\xd0\a\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +

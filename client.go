@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 	pb "transaction-processor/message"
@@ -19,13 +20,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-type ClientConfig struct {
-	ClientId   int
-	ClientName string
-	Port       int
-}
-
 
 type PendingRequest struct {
 	mu           sync.Mutex
@@ -38,18 +32,16 @@ type PendingRequest struct {
 type Client struct {
 	pb.UnimplementedClientServiceServer
 
-	id     int
-	name   string
 	port   int
 
-	muLeader sync.RWMutex
-	leaderId int32
+	muPending   sync.RWMutex
+	pendingReqs map[string]*PendingRequest
 
 	muConn sync.Mutex
 	serverConns map[int32]*grpc.ClientConn
 
-	muPending   sync.RWMutex
-	pendingReqs map[string]*PendingRequest
+	muCluster sync.RWMutex
+	clusterInfo map[int32]*ClusterInfo
 
 	// for graceful shutdown
 	// muStop   sync.RWMutex
@@ -59,43 +51,66 @@ type Client struct {
 
 
 func NewClient(port int) (*Client, error) {
-	
-	return &Client{
-		// id:          id,
-		// name:        name,
-		leaderId:      1,
+	client := &Client{
 		port:        port,
 		serverConns: make(map[int32]*grpc.ClientConn),
 		pendingReqs: make(map[string]*PendingRequest),
+		clusterInfo: make(map[int32]*ClusterInfo),
 		// stopChan: make(chan struct{}),
         // stopped: false, 
 		// replyTracker: NewReplyTracker(),
-	}, nil
+	}
+
+	client.buildClientClusterMap()
+
+	return client, nil
 }
 
 func (client *Client) startGrpcServer() error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", client.port))
 	if err != nil {
-		return fmt.Errorf("client %s failed to listen on %d: %w", client.name, client.port, err)
+		return fmt.Errorf("client failed to listen on %d: %w", client.port, err)
 	}
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterClientServiceServer(grpcServer, client)
 
 	go func() {
-		log.Printf("[Client %s] listening for replies on :%d", client.name, client.port)
+		log.Printf("[Client] listening for replies on :%d", client.port)
 		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("[Client %s] gRPC serve error: %v", client.name, err)
+			log.Fatalf("[Client] gRPC serve error: %v", err)
 		}
 	}()
 	return nil
 }
 
+func(client *Client) buildClientClusterMap(){
+	client.muCluster.Lock()
+    defer client.muCluster.Unlock()
+
+	for _, nodeConfig := range getNodeCluster() {
+		info, exists := client.clusterInfo[nodeConfig.ClusterId]
+
+		if !exists {
+			info = &ClusterInfo{
+                ClusterId: nodeConfig.ClusterId,
+                NodeIds:   []int32{},
+                LeaderId:  1 + 3 * (nodeConfig.ClusterId-1),
+            }
+
+			client.clusterInfo[nodeConfig.ClusterId] = info
+		}
+
+		info.NodeIds = append(info.NodeIds, nodeConfig.NodeId)
+	} 
+}
 
 
 func (client *Client) SendTransaction(tx Transaction) string {
+	dataPointId :=client.getReqDataPoint(tx.Sender)
+
 	req := &pb.ClientRequest{
-        ClientId: int32(client.id),
+        ClientId: dataPointId,
         Transaction: &pb.Transaction{
             Sender:   tx.Sender,
             Receiver: tx.Receiver,
@@ -104,57 +119,74 @@ func (client *Client) SendTransaction(tx Transaction) string {
         Timestamp: timestamppb.Now(),
     }
 
-	reqKey := client.getRequestKey(req.Timestamp)
+	reqKey := client.getRequestKey(dataPointId,req.Timestamp)
 
     // Register pending request BEFORE sending
-	pending := client.registerRequest(req.Timestamp,false,false)
+	pending := client.registerRequest(dataPointId,req.Timestamp,false)
 	defer client.cleanupRequest(reqKey)
 
 	attemptCount := 0
 
 	for {
 		// if client.IsStopped() {
-        //     log.Printf("[Client %d] Stopping write request loop (stopped)", client.id)
+        //     log.Printf("[Client] Stopping write request loop (stopped)")
         //     return ""
         // }
 
 		attemptCount++
-        log.Printf("[Client %d] Write attempt #%d for request (%s, %s, %d)", client.id, attemptCount, 
+        log.Printf("[Client] Write attempt #%d for request (%s, %s, %d)", attemptCount, 
 		req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
-		client.muLeader.RLock()
-		leaderId := client.leaderId
-		client.muLeader.RUnlock()
+		client.muCluster.RLock()
 		
-		grpcClient, _ := client.getConnForNode(leaderId)
+		senderIntVal, err := strconv.Atoi(req.Transaction.Sender) 
+		if err != nil {
+			log.Printf("[Client] Failed to convert value of client sender from string to int")
+			break
+		}
 
+		clusterId := getClusterId(int32(senderIntVal))
+		log.Printf("[Client] Sending transaction to cluster=%d",clusterId)
+
+		info,exists := client.clusterInfo[clusterId]
+
+		if !exists {
+			log.Printf("[Client] Cluster info not present=%d",clusterId)
+		}
+		log.Printf("[Client] cluster info presnt%v",info.NodeIds)
+
+		targetLeaderId := client.clusterInfo[clusterId].LeaderId
+		targetNodeIds := client.clusterInfo[clusterId].NodeIds
+		log.Printf("[Client] Sending transaction to cluster=%d leaderId=%d",clusterId,targetLeaderId)
+
+		client.muCluster.RUnlock()
+		
+		grpcClient, _ := client.getConnForNode(targetLeaderId)
 		if grpcClient != nil {
 			_, err := grpcClient.SendRequestMessage(context.Background(), req)
 			
 			if err != nil {
-				log.Printf("[Client %d] Failed to send to leader %d: %v", client.id, leaderId, err)
+				log.Printf("[Client] Failed to send to leader %d: %v",  targetLeaderId, err)
 			} else {
-				log.Printf("[Client %d] Sent request to leader %d", client.id, leaderId)
+				log.Printf("[Client] Sent request to leader %d",  targetLeaderId)
 			}
 		}
 
 		result,ok := client.waitForReply(pending, 100*time.Millisecond)
-
 		if ok {
 			pending.mu.Lock()	
 			client.updateLeaderFromReply(pending.reply)
 			pending.mu.Unlock()
 
-			log.Printf("[Client %d] Received result=%s for (%s, %s, %d)",
-			client.id,result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+			log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+			result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 			
 			return result
 		}
 
-		client.broadcastToAllNodes(req)
+		client.broadcastToAllNodes(req,targetNodeIds)
 
 		result,ok = client.waitForReply(pending, 200*time.Millisecond)
-
 		if ok {
 			pending.mu.Lock()
 			client.updateLeaderFromReply(pending.reply)
@@ -163,6 +195,9 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			return result
 		}
 	}
+
+	// Returning garbage in case of some unexpected errors
+	return ""
 }
 
 func (client *Client) updateLeaderFromReply(response *pb.ReplyMessage) {
@@ -170,33 +205,36 @@ func (client *Client) updateLeaderFromReply(response *pb.ReplyMessage) {
         return
     }
 
-    client.muLeader.Lock()
-    defer client.muLeader.Unlock()
+    client.muCluster.Lock()
+    defer client.muCluster.Unlock()
 
-	leaderId := response.Ballot.NodeId
+	leaderIdFromResp := response.Ballot.NodeId
+
+	clusterId := getClusterId(response.ClientId)
+	log.Printf("[Client] Checking leader update for cluster=%d for clientId=%d",clusterId,response.ClientId)
+	existingLeaderId := client.clusterInfo[clusterId].LeaderId
+	
     
-    if leaderId != client.leaderId {
-		log.Printf("[Client %d] Updating leaderID from %d to %d",client.id,client.leaderId,leaderId)
-        client.leaderId = leaderId
+    if leaderIdFromResp != existingLeaderId {
+		log.Printf("[Client] Updating leaderID from %d to %d for cluster=%d",existingLeaderId,leaderIdFromResp,clusterId)
+        client.clusterInfo[clusterId].LeaderId = leaderIdFromResp
     }
 }
 
-func (client *Client) broadcastToAllNodes(req *pb.ClientRequest) {
-	nodeIDs := getAllNodeIDs()
-	
-	for _, nodeId := range nodeIDs {
+func (client *Client) broadcastToAllNodes(req *pb.ClientRequest,targetNodeIds []int32) {
+	for _, nodeId := range targetNodeIds {
 		go func(nid int32) {
 			grpcClient, _ := client.getConnForNode(nid)
 			if grpcClient == nil {
-				log.Printf("[Client %d] No connection to node %d", client.id, nid)
+				log.Printf("[Client] No connection to node %d",  nid)
 				return
 			}
 						
 			_, err := grpcClient.SendRequestMessage(context.Background(), req)
 			if err != nil {
-				log.Printf("[Client %d] Failed to broadcast to node %d: %v", client.id, nid, err)
+				log.Printf("[Client] Failed to broadcast to node %d: %v",  nid, err)
 			} else {
-				log.Printf("[Client %d] Broadcasted request (%s, %s, %d) to node %d", client.id,
+				log.Printf("[Client] Broadcasted request (%s, %s, %d) to node %d", 
 				req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount, nid)
 			}
 		}(nodeId)
@@ -228,17 +266,24 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
 		pending.mu.Lock()
 		defer pending.mu.Unlock()
 		
-		log.Printf("[Client %d] Timeout waiting for reply from client",client.id)
+		log.Printf("[Client] Timeout waiting for reply from server")
 		return "", false
 	}
 }
 
+// Sender in transaction
+func(client *Client) getReqDataPoint(dataPointStr string) int32{
+	datapointClientId,_ := strconv.ParseInt(dataPointStr, 10, 0)
 
-func (client *Client) getRequestKey(timestamp *timestamppb.Timestamp) string {
-    return fmt.Sprintf("%d-%d-%d", client.id, timestamp.Seconds, timestamp.Nanos)
+	return  int32(datapointClientId)
 }
 
-func (client *Client) createPendingRequest(timestamp *timestamppb.Timestamp,isReadOnly bool, isRetry bool) *PendingRequest {
+
+func (client *Client) getRequestKey(dataPoint int32,timestamp *timestamppb.Timestamp) string {
+    return fmt.Sprintf("%d-%d-%d", dataPoint, timestamp.Seconds, timestamp.Nanos)
+}
+
+func (client *Client) createPendingRequest(timestamp *timestamppb.Timestamp,isReadOnly bool) *PendingRequest {
 	return &PendingRequest{
 		timestamp:    timestamp,
 		reply:      nil,
@@ -247,8 +292,8 @@ func (client *Client) createPendingRequest(timestamp *timestamppb.Timestamp,isRe
 	}
 }
 
-func (client *Client) registerRequest(timestamp *timestamppb.Timestamp,isReadOnly bool, isRetry bool) *PendingRequest {
-	reqKey := client.getRequestKey(timestamp)
+func (client *Client) registerRequest(datapoint int32, timestamp *timestamppb.Timestamp,isReadOnly bool) *PendingRequest {
+	reqKey := client.getRequestKey(datapoint,timestamp)
 	
 	client.muPending.Lock()
 	defer client.muPending.Unlock()
@@ -258,7 +303,7 @@ func (client *Client) registerRequest(timestamp *timestamppb.Timestamp,isReadOnl
 		return existing
 	}
 	
-	pending := client.createPendingRequest(timestamp,isReadOnly,isRetry)
+	pending := client.createPendingRequest(timestamp,isReadOnly)
 	client.pendingReqs[reqKey] = pending
 	return pending
 }
@@ -285,7 +330,7 @@ func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *gr
 		}
 	}
 	if targetNode == nil {
-		log.Printf("[Client %d] Node configuration for ID %d not found.", client.id, nodeId)
+		log.Printf("[Client] Node configuration for ID %d not found.",  nodeId)
 		return nil, nil
 	}
 
@@ -293,7 +338,7 @@ func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *gr
 	conn, err := grpc.NewClient(targetAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
 	if err != nil {
-		log.Printf("[Client %d] Failed to connect to node %d at %s: %v", client.id, nodeId, targetAddr, err)
+		log.Printf("[Client] Failed to connect to node %d at %s: %v",  nodeId, targetAddr, err)
 		return nil, nil
 	}
 
@@ -304,13 +349,13 @@ func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *gr
 func (client *Client) HandleReply(ctx context.Context, reply *pb.ReplyMessage) (*emptypb.Empty, error) {
 	// 1. VERIFY REQUEST TIMESTAMP MATCHES
 	if reply.ClientRequestTimestamp == nil {
-		log.Printf("[Client %d] Rejected reply: Missing request timestamp from Node %d", 
-			client.id, reply.Ballot.NodeId)
+		log.Printf("[Client] Rejected reply: Missing request timestamp from Node %d", 
+			 reply.Ballot.NodeId)
 		return &emptypb.Empty{}, nil
 	}
 
 	// 2. GET PENDING REQUEST
-    reqKey := client.getRequestKey(reply.ClientRequestTimestamp)
+    reqKey := client.getRequestKey(reply.ClientId,reply.ClientRequestTimestamp)
 
     client.muPending.RLock()
 	pending, exists := client.pendingReqs[reqKey]

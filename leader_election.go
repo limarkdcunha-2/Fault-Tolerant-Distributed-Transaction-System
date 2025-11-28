@@ -130,7 +130,7 @@ func (node *Node) startLeaderElection(){
 }
 
 func (node *Node) broadcastPrepareMessage(msg *pb.PrepareMessage){
-	allNodes := getAllNodeIDs()
+	allNodes := node.getAllClusterNodes()
 
 	log.Printf("[Node %d] Broadcasting PREPARE Round=%d", 
                 node.nodeId, msg.Ballot.RoundNumber)
@@ -142,7 +142,7 @@ func (node *Node) broadcastPrepareMessage(msg *pb.PrepareMessage){
 
 		peerClient, ok := node.peers[nodeId]
         if !ok {
-            log.Printf("[Node %d] ERROR: No peer client connection found for Node %d. Skipping Collected-prepare broadcast.", 
+            log.Printf("[Node %d] ERROR: No peer client connection found for Node %d. Skipping PREPARE broadcast.", 
                 node.nodeId, nodeId)
             continue
         }

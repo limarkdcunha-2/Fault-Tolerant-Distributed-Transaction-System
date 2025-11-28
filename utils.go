@@ -6,45 +6,126 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"sort"
+	pb "transaction-processor/message"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// TO DO need to make this dynamic
 func getNodeCluster() []NodeConfig {
 	return []NodeConfig{
-		{NodeId: 1, PortNo: 8001},
-		{NodeId: 2, PortNo: 8002},
-		{NodeId: 3, PortNo: 8003},
-		{NodeId: 4, PortNo: 8004},
-		{NodeId: 5, PortNo: 8005},
+		{NodeId: 1, ClusterId: 1, PortNo: 8001},
+        {NodeId: 2, ClusterId: 1, PortNo: 8002},
+        {NodeId: 3, ClusterId: 1, PortNo: 8003},
+		{NodeId: 4, ClusterId: 2, PortNo: 8004},
+        {NodeId: 5, ClusterId: 2, PortNo: 8005},
+        {NodeId: 6, ClusterId: 2, PortNo: 8006},
+        {NodeId: 7, ClusterId: 3, PortNo: 8007},
+        {NodeId: 8, ClusterId: 3, PortNo: 8008},
+        {NodeId: 9, ClusterId: 3, PortNo: 8009},
 	}
 }
 
-
-func getClientCluster() []ClientConfig {
-    return []ClientConfig{
-        {ClientId: 1, ClientName: "A", Port: 9000},
-        {ClientId: 2, ClientName: "B", Port: 9001},
-        {ClientId: 3, ClientName: "C", Port: 9002},
-        {ClientId: 4, ClientName: "D", Port: 9003},
-        {ClientId: 5, ClientName: "E", Port: 9004},
-        {ClientId: 6, ClientName: "F", Port: 9005},
-        {ClientId: 7, ClientName: "G", Port: 9006},
-        {ClientId: 8, ClientName: "H", Port: 9007},
-        {ClientId: 9, ClientName: "I", Port: 9008},
-        {ClientId: 10, ClientName: "J", Port: 9009},
+// TO DO need to make this dynamic
+func getClusterId(id int32) int32 {
+    if id >= 1 && id <= 3000 {
+        return 1
+    } else if id >= 3001 && id <= 6000 {
+        return 2
+    } else if id >= 6001 && id <= 9000 {
+        return 3
     }
+    
+    // If data point is not within this limit then error should be thrown
+    return -1
+}
+
+func (node *Node) getAllClusterNodes() []int32 {
+    node.muCluster.Lock()
+    defer node.muCluster.Unlock()
+    
+    targetNodeIds := node.clusterInfo[node.clusterId].NodeIds
+	
+	return targetNodeIds
+}
+
+func (node *Node) isLeader() bool {
+	node.muBallot.RLock()
+	defer node.muBallot.Unlock()
+
+	return node.promisedBallotAccept.NodeId == node.nodeId
 }
 
 
-func getAllNodeIDs() []int32 {
-	var ids []int32
+func makeRequestKey(clientId int32, timestamp *timestamppb.Timestamp) string {
+	return fmt.Sprintf("%d-%d", clientId, timestamp.AsTime().UnixNano())
+}
 
-	for _, cfg := range getNodeCluster() {
-		ids = append(ids, cfg.NodeId)
-	}
-	return ids
+func (node *Node) requestsAreEqual(r1, r2 *pb.ClientRequest) bool {
+    return r1.ClientId == r2.ClientId && r1.Timestamp.AsTime().Equal(r2.Timestamp.AsTime())
+}
+
+
+func (node *Node) computeStateDigest() (string, error) {
+	iter,_ := node.state.NewIter(nil)
+    defer iter.Close()
+
+	hasher := sha256.New()
+
+    for iter.First(); iter.Valid(); iter.Next() {
+        if _, err := hasher.Write(iter.Key()); err != nil {
+            return "", err
+        }
+        if _, err := hasher.Write(iter.Value()); err != nil {
+            return "", err
+        }
+    }
+
+    return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func (node *Node) isBallotEqual(b1, b2 *pb.BallotNumber) bool {
+    if b1 == nil || b2 == nil {
+        return false 
+    }
+    return b1.RoundNumber == b2.RoundNumber && b1.NodeId == b2.NodeId
+}
+
+func (node *Node) isBallotGreaterThan(b1, b2 *pb.BallotNumber) bool {
+    if b1 == nil || b2 == nil {
+        return false
+    }
+    
+    if b1.RoundNumber > b2.RoundNumber {
+        return true
+    }
+    
+    if b1.RoundNumber == b2.RoundNumber && b1.NodeId > b2.NodeId {
+        return true
+    }
+    
+    return false
+}
+
+func (node *Node) isBallotLessThan(b1, b2 *pb.BallotNumber) bool {
+    if b1 == nil || b2 == nil {
+        return false
+    }
+
+    if b1.RoundNumber < b2.RoundNumber {
+        return true
+    }
+
+    if b1.RoundNumber == b2.RoundNumber && b1.NodeId < b2.NodeId {
+        return true
+    }
+
+    return false
 }
 
 

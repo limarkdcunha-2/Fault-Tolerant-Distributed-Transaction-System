@@ -168,7 +168,7 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 }
 
 func (node *Node) broadcastAcceptMessage(msg *pb.AcceptMessage){
-	allNodes := getAllNodeIDs()
+	allNodes := node.getAllClusterNodes()
 
 	log.Printf("[Node %d] Broadcasting ACCEPT seq=%d", 
                 node.nodeId, msg.SequenceNum)
@@ -430,7 +430,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 }
 
 func(node *Node) broadcastCommitMessage(msg *pb.CommitMessage){
-	allNodes := getAllNodeIDs()
+	allNodes := node.getAllClusterNodes()
 
 	log.Printf("[Node %d] Broadcasting COMMIT seq=%d", 
                 node.nodeId, msg.SequenceNum)
@@ -707,9 +707,8 @@ func (node *Node) executeInOrder(isLeader bool) {
 
 func(node *Node) sendReplyToClient(reply *pb.ReplyMessage){
 	log.Printf("[Node %d] Sending REPLY back to client",node.nodeId)
-	grpcClient, _ := node.getConnForClient(reply.ClientId)
-
-	grpcClient.HandleReply(context.Background(),reply)
+	
+	node.clientSideGrpcClient.HandleReply(context.Background(),reply)
 }
 
 
@@ -1129,7 +1128,7 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 }
 
 func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
-	allNodes := getAllNodeIDs()
+	allNodes := node.getAllClusterNodes()
 
 	log.Printf("[Node %d] Broadcasting NEW-VIEW Round=%d", 
                 node.nodeId, msg.Ballot.RoundNumber)
@@ -1337,7 +1336,7 @@ func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage,highe
 
 
 func(node *Node) broadcastCheckpointMessage(msg *pb.CheckpointMessage){
-	allNodes := getAllNodeIDs()
+	allNodes := node.getAllClusterNodes()
 
 	log.Printf("[Node %d] Broadcasting CHECKPOINT for seq=%d", 
                 node.nodeId, msg.SequenceNum)
@@ -1579,12 +1578,12 @@ func (node *Node) PrintAcceptLog(ctx context.Context, req *emptypb.Empty) (*empt
 }
 
 func(node *Node) PrintBalance(ctx context.Context,req *pb.PrintBalanceReq ) (*emptypb.Empty, error) {
-	balance,err := node.getBalance(req.ClientName)
+	balance,err := node.getBalance(req.Datapoint)
 
 	if err == nil {
-		fmt.Printf("[Node %d] Balance=%d Client=%s\n",node.nodeId,balance,req.ClientName)
+		fmt.Printf("[Node %d] %s=%d \n",node.nodeId,req.Datapoint,balance)
 	} else {
-		log.Printf("[Node %d] Error while reading balance for client=%s err=%v",node.nodeId,req.ClientName,err)
+		log.Printf("[Node %d] Error while reading balance for datapoint=%s err=%v",node.nodeId,req.Datapoint,err)
 	}
 
 	return &emptypb.Empty{},nil

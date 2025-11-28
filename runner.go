@@ -12,8 +12,10 @@ import (
 	"log"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	pb "transaction-processor/message"
 
 	"google.golang.org/grpc"
@@ -72,14 +74,13 @@ func (r *Runner) RunAllTestSets() {
     }
 
     // 1. Build client
-    client,_ := NewClient(9000)
-    r.client = client
+    r.client,_ = NewClient(9000)
     r.client.startGrpcServer()
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        // if setNum > 3 {
-        //     break
-        // }
+        if setNum > 1 {
+            break
+        }
 
         tc := r.testCases[setNum]
         fmt.Printf("\n=========================================\n")
@@ -95,12 +96,11 @@ func (r *Runner) RunAllTestSets() {
         // r.UpdateActiveNodes(tc.LiveNodes)
 
         // Execute transactions
-        // start := time.Now()
+        start := time.Now()
         // need to spawn this in go routine
         r.ExecuteTestCase(tc)
-        // end := time.Since(start)
-
-        // log.Printf("[Runner] Total time elapsed %v",end)
+        end := time.Since(start)
+        log.Printf("[Runner] Total time elapsed %v",end)
         
         r.showInteractiveMenu()
         // r.PrintStatusAll()
@@ -217,7 +217,7 @@ func (r *Runner) showInteractiveMenu() {
         // case "1":
         //     r.PrintLogsForAllNodes()
         case "2":
-                fmt.Print("Enter sequence number: ")
+                fmt.Print("Enter datapoint number: ")
             seqInput, _ := reader.ReadString('\n')
             seqInput = strings.TrimSpace(seqInput)
 
@@ -322,18 +322,30 @@ func (r *Runner) PrintStatusAll() {
     }
 }
 
-func (r *Runner) PrintBalanceAll(clientName string){
-    for _, nodeCfg := range getNodeCluster() {
-        client, exists := r.nodeClients[int32(nodeCfg.NodeId)]
+func (r *Runner) PrintBalanceAll(datapoint string){
+    datapointInt, err := strconv.ParseInt(datapoint, 10, 32)
+	if err != nil {
+		log.Printf("failed to convert string to int32: %v", err)
+        return
+	}
+
+    targetClusterId := getClusterId(int32(datapointInt))
+
+    r.client.muCluster.RLock()
+    targetNodeIds := r.client.clusterInfo[targetClusterId].NodeIds
+    r.client.muCluster.RUnlock()
+
+    for _, nodeId := range targetNodeIds {
+        client, exists := r.nodeClients[nodeId]
         if !exists {
-            log.Printf("[Runner] No connection to node %d", nodeCfg.NodeId)
+            log.Printf("[Runner] No connection to node %d", nodeId)
             continue
         }
 
-        _, err := client.PrintBalance(context.Background(),  &pb.PrintBalanceReq{ClientName: clientName})
+        _, err := client.PrintBalance(context.Background(),  &pb.PrintBalanceReq{Datapoint: datapoint})
 
         if err != nil {
-            log.Printf("[Runner] Failed to print log for node %d: %v", nodeCfg.NodeId, err)
+            log.Printf("[Runner] Failed to print log for node %d: %v",nodeId, err)
         }
     }
 }

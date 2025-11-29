@@ -76,7 +76,7 @@ type Node struct {
 	f int32
 
 	muBallot sync.RWMutex
-	myBallot *pb.BallotNumber
+	// myBallot *pb.BallotNumber
 	promisedBallotAccept  *pb.BallotNumber
 	promisedBallotPrepare *pb.BallotNumber
 
@@ -133,10 +133,10 @@ type Node struct {
 
 
 func NewNode(nodeId, portNo int32) (*Node, error) {
-	myBallot := &pb.BallotNumber{
-		NodeId: nodeId,
-		RoundNumber: 0,
-	}
+	// myBallot := &pb.BallotNumber{
+	// 	NodeId: nodeId,
+	// 	RoundNumber: 0,
+	// }
 
 	defaultPromisedBallot := &pb.BallotNumber{
 		NodeId: 0,
@@ -146,7 +146,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 	newNode :=  &Node{
 		nodeId: nodeId,
 		portNo: portNo,
-		myBallot: myBallot,
+		// myBallot: myBallot,
 		promisedBallotAccept:defaultPromisedBallot,
 		promisedBallotPrepare: defaultPromisedBallot,
 		currentSeqNo: 0,

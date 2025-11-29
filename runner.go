@@ -78,9 +78,9 @@ func (r *Runner) RunAllTestSets() {
     r.client.startGrpcServer()
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        if setNum > 1 {
-            break
-        }
+        // if setNum > 2 {
+        //     break
+        // }
 
         tc := r.testCases[setNum]
         fmt.Printf("\n=========================================\n")

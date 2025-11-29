@@ -163,7 +163,7 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 	// node.markRequestPending(req.ClientId, req.Timestamp)
 
 	acceptMessage := &pb.AcceptMessage{
-		Ballot:node.myBallot,
+		Ballot:node.promisedBallotAccept,
 		SequenceNum: seq,
 		Request:req,
 	}
@@ -251,12 +251,21 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 
 	// 1b. Updated promisedBallot if higher
 	isBallotGreater := false
+	wasLeader := false
+
 	if node.isBallotGreaterThan(msg.Ballot,promisedBallot) {
 		isBallotGreater = true
+		wasLeader = node.promisedBallotAccept.NodeId == node.nodeId
+
 		node.promisedBallotAccept = msg.Ballot
 	}
 
 	node.muBallot.Unlock()
+
+	// Release any old locks that I held were held as a leader
+	if wasLeader {
+		node.releaseAllLocks()	
+	}
 
 	// 3. Check if already accepted this message
 	node.muLog.Lock()
@@ -946,7 +955,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.muBallot.Lock()
 		// node.promisedBallotPrepare = msg.Ballot
 		node.promisedBallotAccept = msg.Ballot
-		node.myBallot = msg.Ballot
+		// node.myBallot = msg.Ballot
 		node.muBallot.Unlock()
 
 		// 4c. Updated election state pointers
@@ -1308,6 +1317,9 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 		highestBallotPrepare: nil,
 	}
 	node.muPreLog.Unlock()
+
+	// Release all locks that you might have held on as old leader
+	node.releaseAllLocks()
 
 	node.muExec.Lock()
 	lastExecSeqNo := node.lastExecSeqNo 

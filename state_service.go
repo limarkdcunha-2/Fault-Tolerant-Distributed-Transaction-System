@@ -234,15 +234,3 @@ func (node *Node) getBalance(accountName string) (int32, error) {
     
     return balance, nil
 }
-
-// func (node *Node) setBalance(accountName string, balance int32) error {
-//     node.muState.Lock()
-//     defer node.muState.Unlock()
-    
-//     data, err := serializeBalance(balance)
-//     if err != nil {
-//         return fmt.Errorf("failed to serialize balance: %v", err)
-//     }
-    
-//     return node.state.Set(accountKey(accountName), data, pebble.Sync)
-// }

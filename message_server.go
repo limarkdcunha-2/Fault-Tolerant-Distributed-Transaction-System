@@ -25,6 +25,15 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
         node.nodeId, req.ClientId, req.Timestamp.AsTime(),
         req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
 
+	
+	if !isIntraShard(req){
+		log.Printf("[Node %d] CROSS SHARD flow",node.nodeId)
+		// This return is temporary for now
+		return &emptypb.Empty{}, nil
+	}
+
+	log.Printf("[Node %d] INTRA SHARD flow",node.nodeId)
+
 	node.muBallot.RLock()
 	leaderId := node.promisedBallotAccept.NodeId
 	log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",node.nodeId,node.promisedBallotAccept.RoundNumber,node.promisedBallotAccept.NodeId)
@@ -68,7 +77,7 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 }
 
 func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
-	// 2. Check if already processed this request before
+	// 1. Check if already processed this request before
 	if cachedReply, exists := node.GetCachedReply(req.ClientId, req.Timestamp); exists {
 		log.Printf("[Node %d] Duplicate request from client %d (ts=%s). Returning cached reply.",
 			node.nodeId, req.ClientId, req.Timestamp.AsTime())
@@ -77,31 +86,26 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
         return
     }
 
-
-	// 3. Check pending requests (assigned seq but not executed)
-	node.muPending.Lock()
-	
 	reqKey := makeRequestKey(req.ClientId, req.Timestamp)
+
+	// 2. Check pending requests (assigned seq but not executed)
+	node.muPending.Lock()
 	_, isPending := node.pendingRequests[reqKey]
 
-	// 3a If pending do nothing
-    if isPending {
+	// 2a If pending do nothing
+    if isPending {	
 		node.muPending.Unlock()
-
         log.Printf("[Node %d]: Duplicate (pending) from client %d - ignoring retry",
             node.nodeId, req.ClientId)
         return
     }
 
-	// 3b Mark as pending
-	node.pendingRequests[reqKey] = true
-	node.muPending.Unlock()
-
-	// 4. Reroute the request to leader
+	// 3. Reroute the request to leader
 	if node.nodeId != leaderId {
+		node.muPending.Unlock()
+
 		log.Printf("[Node %d] Not primary, routing client request to primary", node.nodeId)
 		
-		// node.markRequestPending(req.ClientId, req.Timestamp)
 		if !node.livenessTimer.IsRunning() {
 			node.livenessTimer.Start()
 		}
@@ -109,6 +113,33 @@ func(node *Node) handleRequest(req *pb.ClientRequest, leaderId int32){
 		node.peers[leaderId].SendRequestMessage(context.Background(),req)
 		return
 	}
+
+	// 4. Check if data points are locked
+	node.muState.Lock()
+	if node.isLocked(req.Transaction.Sender) || node.isLocked(req.Transaction.Receiver) {
+		// 4a If locked simply skip the transaction
+		log.Printf("[Node %d] Rejecting request (%s, %s, %d) due to locks being held on datapoints",node.nodeId,
+		req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+
+		// Maintaining strict order of locking for these two
+		node.muState.Unlock()
+		node.muPending.Unlock()
+
+		return
+	}
+
+	// 4b Else lock both the datapoints
+	log.Printf("[Node %d] Acquiring locks on both the data points (%s, %s)",
+	node.nodeId,req.Transaction.Sender,req.Transaction.Receiver)
+
+	node.acquireLock(req.Transaction.Sender,reqKey)
+	node.acquireLock(req.Transaction.Receiver,reqKey)
+
+	node.muState.Unlock()
+
+	// 4b Mark as pending
+	node.pendingRequests[reqKey] = true
+	node.muPending.Unlock()
 
 	// 5. Assign seq number
 	node.muLog.Lock()
@@ -587,7 +618,7 @@ func (node *Node) executeInOrder(isLeader bool) {
 			if !exists {	
 				log.Printf("[Node %d] Request for seq=%d has never been executed before",node.nodeId,nextSeq)
 
-				node.muState.Lock()
+				// node.muState.Lock()
 
 				var status string
 				
@@ -671,9 +702,16 @@ func (node *Node) executeInOrder(isLeader bool) {
 					
 				}
 
-				node.muState.Unlock()
-
 				node.cacheReplyAndClearPending(reply)
+
+				if isLeader {
+					// Release locks after execution
+					node.muState.Lock()
+					log.Printf("[Node %d] Releasing locks on data points (%s, %s)",node.nodeId,transaction.Sender,transaction.Receiver)
+					node.releaseLock(transaction.Sender)
+					node.releaseLock(transaction.Receiver)
+					node.muState.Unlock()
+				}
 				
 				log.Printf("[Node %d] EXECUTED: Seq=%d successfully. Status=%s", node.nodeId, entry.SequenceNum, status)
 

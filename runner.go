@@ -323,7 +323,7 @@ func (r *Runner) PrintStatusAll() {
 }
 
 func (r *Runner) PrintBalanceAll(datapoint string){
-    datapointInt, err := strconv.ParseInt(datapoint, 10, 32)
+    datapointInt, err := strconv.ParseInt(datapoint, 10, 0)
 	if err != nil {
 		log.Printf("failed to convert string to int32: %v", err)
         return

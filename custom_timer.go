@@ -56,7 +56,7 @@ func (ct *CustomTimer) Start() {
 			ct.mu.Unlock()
 			
 			if ct.onExpired != nil {
-				log.Println("Timer expired, running callback...")
+				log.Println("[Helper] Timer expired, running callback...")
 				ct.onExpired()
 			}
 		case <-ct.stopChan:

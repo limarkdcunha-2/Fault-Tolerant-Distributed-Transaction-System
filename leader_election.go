@@ -14,7 +14,7 @@ import (
 func (node *Node) doNothing() {}
 
 func(node *Node) onLivenessTimerExpired(){
-	log.Printf("[Node %d] Livness timer expired",node.nodeId)
+	log.Printf("[Node %d] Liveness timer expired",node.nodeId)
 	node.muLeader.Lock()
 	node.isLeaderKnown = false
 	log.Printf("[Node %d] isLeaderKnown=%v FIRST",node.nodeId,node.isLeaderKnown)

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	pb "transaction-processor/message"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -128,6 +129,19 @@ func (node *Node) isBallotLessThan(b1, b2 *pb.BallotNumber) bool {
     return false
 }
 
+func isIntraShard(req *pb.ClientRequest) bool {
+    if req == nil || req.Transaction == nil {
+        return false
+    }
+
+    senderInt, _ := strconv.ParseInt(req.Transaction.Sender, 10, 0)
+    receiverInt, _ := strconv.ParseInt(req.Transaction.Receiver, 10, 0)
+
+    senderCluster := getClusterId(int32(senderInt))
+    receiverCluster := getClusterId(int32(receiverInt))
+    
+    return senderCluster == receiverCluster
+}
 
 func (node *Node) Activate() {
     node.muStatus.Lock()

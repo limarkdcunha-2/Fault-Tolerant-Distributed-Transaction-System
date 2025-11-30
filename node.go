@@ -55,6 +55,7 @@ type LogEntry struct {
 	AcceptCount int32
 	Phase Phase
 	Status LogEntryStatus
+	EntryAcceptType pb.AcceptType
 }
 
 type PrepareLog struct {
@@ -65,6 +66,13 @@ type PrepareLog struct {
 type PromiseLog struct {
 	log map[int32]*pb.PromiseMessage
 	isPromiseQuorumReached bool
+}
+
+type CrossShardTrans struct {
+	SequenceNum int32
+	Ballot *pb.BallotNumber
+	Request *pb.ClientRequest
+	Timer *CustomTimer
 }
 
 type Node struct {
@@ -127,6 +135,12 @@ type Node struct {
 	clusterId int32
     clusterInfo map[int32]*ClusterInfo
 
+	muTwoPcPrepareQueue sync.RWMutex
+	twoPcPrepareQueue []*pb.TwoPCPrepareMessage
+
+	muCrossSharTxs sync.RWMutex
+	crossSharTxs map[string]*CrossShardTrans
+
 	peers map[int32]pb.MessageServiceClient
 	clientSideGrpcClient pb.ClientServiceClient
 }	
@@ -164,6 +178,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		pendingRequests: make(map[string]bool),
 		requestsQueue:make([]*pb.ClientRequest, 0),
 		clusterInfo: make(map[int32]*ClusterInfo),
+		crossSharTxs:make(map[string]*CrossShardTrans),
 	}
 
 	randomTime := time.Duration(rand.Intn(100)+100) * time.Millisecond
@@ -231,7 +246,7 @@ func(node *Node) buildClusterMap(){
 			info = &ClusterInfo{
                 ClusterId: nodeConfig.ClusterId,
                 NodeIds:   []int32{},
-                LeaderId:  0,
+                LeaderId:  (nodeConfig.ClusterId-1)*3+1,
             }
 
 			node.clusterInfo[nodeConfig.ClusterId] = info

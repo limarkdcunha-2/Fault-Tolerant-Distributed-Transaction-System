@@ -25,7 +25,7 @@ type BankAccounts struct {
 }
 
 // Has to be called under muExec
-func (node *Node) processTransaction(transaction Transaction) (bool, error) {
+func (node *Node) processIntraShardTransaction(transaction Transaction) (bool, error) {
     sender := transaction.Sender
     receiver := transaction.Receiver
     amount := transaction.Amount
@@ -98,6 +98,74 @@ func (node *Node) processTransaction(transaction Transaction) (bool, error) {
         return false, err
     }
     // log.Printf("[Node %d] PRE SET receiver",node.nodeId)
+    if err := batch.Set(accountKey(receiver), rData, nil); err != nil {
+        return false, err
+    }
+    // log.Printf("[Node %d] SET complete",node.nodeId)
+    if err := batch.Commit(pebble.NoSync); err != nil {
+        return false, err
+    }
+    // log.Printf("[Node %d] COMMIT complete",node.nodeId)
+
+    return true, nil
+}
+
+func(node *Node) processCrossShardSenderPart(sender string, amount int32) (bool, error) {
+    senderData, senderCloser, err := node.state.Get(accountKey(sender))
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            return false, fmt.Errorf("sender '%s' not found", sender)
+        }
+        return false, fmt.Errorf("failed to read sender: %v", err)
+    }
+
+    senderBalance, err := deserializeBalance(senderData)
+    senderCloser.Close()
+    if err != nil {
+        return false, fmt.Errorf("failed to deserialize sender balance: %v", err)
+    }
+
+    newSenderBal := senderBalance - amount
+
+    batch := node.state.NewBatch()
+    defer batch.Close()
+
+    // log.Printf("[Node %d] Serialize start",node.nodeId)
+    sData, _ := serializeBalance(newSenderBal)
+
+    if err := batch.Set(accountKey(sender), sData, nil); err != nil {
+        return false, err
+    }
+    if err := batch.Commit(pebble.NoSync); err != nil {
+        return false, err
+    }
+
+    return true, nil
+}
+
+func(node *Node) processCrossShardReceiverPart(receiver string, amount int32) (bool, error) {
+    receiverData, receiverCloser, err := node.state.Get(accountKey(receiver))
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            return false, fmt.Errorf("receiver '%s' not found", receiver)
+        }
+        return false, fmt.Errorf("failed to read receiver: %v", err)
+    }
+
+    receiverBalance, err := deserializeBalance(receiverData)
+    receiverCloser.Close()
+
+    if err != nil {
+        return false, fmt.Errorf("failed to deserialize receiver balance: %v", err)
+    }
+
+    newReceiverBal := receiverBalance + amount
+
+    batch := node.state.NewBatch()
+    defer batch.Close()
+
+    rData, _ := serializeBalance(newReceiverBal)
+
     if err := batch.Set(accountKey(receiver), rData, nil); err != nil {
         return false, err
     }
@@ -214,9 +282,39 @@ func deserializeBalance(data []byte) (int32, error) {
     return int32(binary.LittleEndian.Uint32(data)), nil
 }
 
+//  This can be called regardless of mutex since it is protected by our locking mechanism
+// But need to be sure because muState is hold over in logic
+func(node *Node) checkIfSufficientBalance(sender string, amount int32) (bool){
+    senderData, senderCloser, err := node.state.Get(accountKey(sender))
+
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            log.Printf("[Node %d] Pebble data error 1")
+            return false
+        }
+        log.Printf("[Node %d] Pebble data error 2")
+        return false
+    }
+
+    senderBalance, err := deserializeBalance(senderData)
+    senderCloser.Close()
+    if err != nil {
+        log.Printf("[Node %d] Pebble data error 3")
+        return false
+    }
+
+    if senderBalance < amount {
+        log.Printf("[Node %d] Sender balance=%d less than transfer amount%d",node.nodeId,senderBalance,amount)
+        return false
+    }
+
+    return true
+}
+
+// Helper function
 func (node *Node) getBalance(accountName string) (int32, error) {
-    node.muState.RLock()
-    defer node.muState.RUnlock()
+    // node.muState.RLock()
+    // defer node.muState.RUnlock()
     
     data, closer, err := node.state.Get(accountKey(accountName))
     if err != nil {

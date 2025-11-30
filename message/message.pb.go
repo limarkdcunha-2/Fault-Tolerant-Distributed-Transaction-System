@@ -31,6 +31,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type AcceptType int32
+
+const (
+	AcceptType_INTRA_SHARD AcceptType = 0
+	AcceptType_PREPARE     AcceptType = 1
+	AcceptType_ABORT       AcceptType = 2
+	AcceptType_COMMIT      AcceptType = 3
+)
+
+// Enum value maps for AcceptType.
+var (
+	AcceptType_name = map[int32]string{
+		0: "INTRA_SHARD",
+		1: "PREPARE",
+		2: "ABORT",
+		3: "COMMIT",
+	}
+	AcceptType_value = map[string]int32{
+		"INTRA_SHARD": 0,
+		"PREPARE":     1,
+		"ABORT":       2,
+		"COMMIT":      3,
+	}
+)
+
+func (x AcceptType) Enum() *AcceptType {
+	p := new(AcceptType)
+	*p = x
+	return p
+}
+
+func (x AcceptType) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AcceptType) Descriptor() protoreflect.EnumDescriptor {
+	return file_message_message_proto_enumTypes[0].Descriptor()
+}
+
+func (AcceptType) Type() protoreflect.EnumType {
+	return &file_message_message_proto_enumTypes[0]
+}
+
+func (x AcceptType) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AcceptType.Descriptor instead.
+func (AcceptType) EnumDescriptor() ([]byte, []int) {
+	return file_message_message_proto_rawDescGZIP(), []int{0}
+}
+
 type Transaction struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Sender        string                 `protobuf:"bytes,1,opt,name=Sender,proto3" json:"Sender,omitempty"`
@@ -208,6 +260,7 @@ type AcceptMessage struct {
 	Ballot        *BallotNumber          `protobuf:"bytes,1,opt,name=Ballot,proto3" json:"Ballot,omitempty"`
 	SequenceNum   int32                  `protobuf:"varint,2,opt,name=SequenceNum,proto3" json:"SequenceNum,omitempty"`
 	Request       *ClientRequest         `protobuf:"bytes,3,opt,name=Request,proto3" json:"Request,omitempty"`
+	AcceptType    AcceptType             `protobuf:"varint,4,opt,name=AcceptType,proto3,enum=message.AcceptType" json:"AcceptType,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -261,6 +314,13 @@ func (x *AcceptMessage) GetRequest() *ClientRequest {
 		return x.Request
 	}
 	return nil
+}
+
+func (x *AcceptMessage) GetAcceptType() AcceptType {
+	if x != nil {
+		return x.AcceptType
+	}
+	return AcceptType_INTRA_SHARD
 }
 
 type AcceptedMessage struct {
@@ -336,6 +396,7 @@ type CommitMessage struct {
 	Ballot        *BallotNumber          `protobuf:"bytes,1,opt,name=Ballot,proto3" json:"Ballot,omitempty"`
 	SequenceNum   int32                  `protobuf:"varint,2,opt,name=SequenceNum,proto3" json:"SequenceNum,omitempty"`
 	Request       *ClientRequest         `protobuf:"bytes,3,opt,name=Request,proto3" json:"Request,omitempty"`
+	AcceptType    AcceptType             `protobuf:"varint,4,opt,name=AcceptType,proto3,enum=message.AcceptType" json:"AcceptType,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -389,6 +450,13 @@ func (x *CommitMessage) GetRequest() *ClientRequest {
 		return x.Request
 	}
 	return nil
+}
+
+func (x *CommitMessage) GetAcceptType() AcceptType {
+	if x != nil {
+		return x.AcceptType
+	}
+	return AcceptType_INTRA_SHARD
 }
 
 type ReplyMessage struct {
@@ -835,6 +903,162 @@ func (x *StateTransferResponse) GetState() map[string]int32 {
 	return nil
 }
 
+type TwoPCPrepareMessage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Request       *ClientRequest         `protobuf:"bytes,1,opt,name=Request,proto3" json:"Request,omitempty"`
+	NodeId        int32                  `protobuf:"varint,2,opt,name=NodeId,proto3" json:"NodeId,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TwoPCPrepareMessage) Reset() {
+	*x = TwoPCPrepareMessage{}
+	mi := &file_message_message_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TwoPCPrepareMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TwoPCPrepareMessage) ProtoMessage() {}
+
+func (x *TwoPCPrepareMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_message_message_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TwoPCPrepareMessage.ProtoReflect.Descriptor instead.
+func (*TwoPCPrepareMessage) Descriptor() ([]byte, []int) {
+	return file_message_message_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *TwoPCPrepareMessage) GetRequest() *ClientRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+func (x *TwoPCPrepareMessage) GetNodeId() int32 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+type TwoPCPreparedMessage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Request       *ClientRequest         `protobuf:"bytes,1,opt,name=Request,proto3" json:"Request,omitempty"`
+	NodeId        int32                  `protobuf:"varint,2,opt,name=NodeId,proto3" json:"NodeId,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TwoPCPreparedMessage) Reset() {
+	*x = TwoPCPreparedMessage{}
+	mi := &file_message_message_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TwoPCPreparedMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TwoPCPreparedMessage) ProtoMessage() {}
+
+func (x *TwoPCPreparedMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_message_message_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TwoPCPreparedMessage.ProtoReflect.Descriptor instead.
+func (*TwoPCPreparedMessage) Descriptor() ([]byte, []int) {
+	return file_message_message_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *TwoPCPreparedMessage) GetRequest() *ClientRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+func (x *TwoPCPreparedMessage) GetNodeId() int32 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
+type TwoPCAbortMessage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Request       *ClientRequest         `protobuf:"bytes,1,opt,name=Request,proto3" json:"Request,omitempty"`
+	NodeId        int32                  `protobuf:"varint,2,opt,name=NodeId,proto3" json:"NodeId,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TwoPCAbortMessage) Reset() {
+	*x = TwoPCAbortMessage{}
+	mi := &file_message_message_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TwoPCAbortMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TwoPCAbortMessage) ProtoMessage() {}
+
+func (x *TwoPCAbortMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_message_message_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TwoPCAbortMessage.ProtoReflect.Descriptor instead.
+func (*TwoPCAbortMessage) Descriptor() ([]byte, []int) {
+	return file_message_message_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *TwoPCAbortMessage) GetRequest() *ClientRequest {
+	if x != nil {
+		return x.Request
+	}
+	return nil
+}
+
+func (x *TwoPCAbortMessage) GetNodeId() int32 {
+	if x != nil {
+		return x.NodeId
+	}
+	return 0
+}
+
 type PrintBalanceReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Datapoint     string                 `protobuf:"bytes,1,opt,name=Datapoint,proto3" json:"Datapoint,omitempty"`
@@ -844,7 +1068,7 @@ type PrintBalanceReq struct {
 
 func (x *PrintBalanceReq) Reset() {
 	*x = PrintBalanceReq{}
-	mi := &file_message_message_proto_msgTypes[13]
+	mi := &file_message_message_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -856,7 +1080,7 @@ func (x *PrintBalanceReq) String() string {
 func (*PrintBalanceReq) ProtoMessage() {}
 
 func (x *PrintBalanceReq) ProtoReflect() protoreflect.Message {
-	mi := &file_message_message_proto_msgTypes[13]
+	mi := &file_message_message_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -869,7 +1093,7 @@ func (x *PrintBalanceReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrintBalanceReq.ProtoReflect.Descriptor instead.
 func (*PrintBalanceReq) Descriptor() ([]byte, []int) {
-	return file_message_message_proto_rawDescGZIP(), []int{13}
+	return file_message_message_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *PrintBalanceReq) GetDatapoint() string {
@@ -894,20 +1118,26 @@ const file_message_message_proto_rawDesc = "" +
 	"\bClientId\x18\x03 \x01(\x05R\bClientId\"H\n" +
 	"\fBallotNumber\x12\x16\n" +
 	"\x06NodeId\x18\x01 \x01(\x05R\x06NodeId\x12 \n" +
-	"\vRoundNumber\x18\x02 \x01(\x05R\vRoundNumber\"\x92\x01\n" +
+	"\vRoundNumber\x18\x02 \x01(\x05R\vRoundNumber\"\xc7\x01\n" +
 	"\rAcceptMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12 \n" +
 	"\vSequenceNum\x18\x02 \x01(\x05R\vSequenceNum\x120\n" +
-	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\"\xac\x01\n" +
+	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\x123\n" +
+	"\n" +
+	"AcceptType\x18\x04 \x01(\x0e2\x13.message.AcceptTypeR\n" +
+	"AcceptType\"\xac\x01\n" +
 	"\x0fAcceptedMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12 \n" +
 	"\vSequenceNum\x18\x02 \x01(\x05R\vSequenceNum\x120\n" +
 	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\x12\x16\n" +
-	"\x06NodeId\x18\x04 \x01(\x05R\x06NodeId\"\x92\x01\n" +
+	"\x06NodeId\x18\x04 \x01(\x05R\x06NodeId\"\xc7\x01\n" +
 	"\rCommitMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12 \n" +
 	"\vSequenceNum\x18\x02 \x01(\x05R\vSequenceNum\x120\n" +
-	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\"\xc5\x01\n" +
+	"\aRequest\x18\x03 \x01(\v2\x16.message.ClientRequestR\aRequest\x123\n" +
+	"\n" +
+	"AcceptType\x18\x04 \x01(\x0e2\x13.message.AcceptTypeR\n" +
+	"AcceptType\"\xc5\x01\n" +
 	"\fReplyMessage\x12-\n" +
 	"\x06Ballot\x18\x01 \x01(\v2\x15.message.BallotNumberR\x06Ballot\x12R\n" +
 	"\x16ClientRequestTimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x16ClientRequestTimestamp\x12\x16\n" +
@@ -942,9 +1172,25 @@ const file_message_message_proto_rawDesc = "" +
 	"\n" +
 	"StateEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"/\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"_\n" +
+	"\x13TwoPCPrepareMessage\x120\n" +
+	"\aRequest\x18\x01 \x01(\v2\x16.message.ClientRequestR\aRequest\x12\x16\n" +
+	"\x06NodeId\x18\x02 \x01(\x05R\x06NodeId\"`\n" +
+	"\x14TwoPCPreparedMessage\x120\n" +
+	"\aRequest\x18\x01 \x01(\v2\x16.message.ClientRequestR\aRequest\x12\x16\n" +
+	"\x06NodeId\x18\x02 \x01(\x05R\x06NodeId\"]\n" +
+	"\x11TwoPCAbortMessage\x120\n" +
+	"\aRequest\x18\x01 \x01(\v2\x16.message.ClientRequestR\aRequest\x12\x16\n" +
+	"\x06NodeId\x18\x02 \x01(\x05R\x06NodeId\"/\n" +
 	"\x0fPrintBalanceReq\x12\x1c\n" +
-	"\tDatapoint\x18\x01 \x01(\tR\tDatapoint2\xd0\a\n" +
+	"\tDatapoint\x18\x01 \x01(\tR\tDatapoint*A\n" +
+	"\n" +
+	"AcceptType\x12\x0f\n" +
+	"\vINTRA_SHARD\x10\x00\x12\v\n" +
+	"\aPREPARE\x10\x01\x12\t\n" +
+	"\x05ABORT\x10\x02\x12\n" +
+	"\n" +
+	"\x06COMMIT\x10\x032\xb2\t\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +
@@ -955,7 +1201,10 @@ const file_message_message_proto_rawDesc = "" +
 	"\rHandleNewView\x12\x17.message.NewViewMessage\x1a\x16.google.protobuf.Empty\x12F\n" +
 	"\x10HandleCheckpoint\x12\x1a.message.CheckpointMessage\x1a\x16.google.protobuf.Empty\x12P\n" +
 	"\x18MakeStateTransferRequest\x12\x1c.message.StateTranserRequest\x1a\x16.google.protobuf.Empty\x12U\n" +
-	"\x1bHandleStateTransferResponse\x12\x1e.message.StateTransferResponse\x1a\x16.google.protobuf.Empty\x12@\n" +
+	"\x1bHandleStateTransferResponse\x12\x1e.message.StateTransferResponse\x1a\x16.google.protobuf.Empty\x12J\n" +
+	"\x12HandleTwoPCPrepare\x12\x1c.message.TwoPCPrepareMessage\x1a\x16.google.protobuf.Empty\x12L\n" +
+	"\x13HandleTwoPCPrepared\x12\x1d.message.TwoPCPreparedMessage\x1a\x16.google.protobuf.Empty\x12F\n" +
+	"\x10HandleTwoPCAbort\x12\x1a.message.TwoPCAbortMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
 	"\x0ePrintAcceptLog\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12:\n" +
 	"\bFailNode\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12=\n" +
 	"\vRecoverNode\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12@\n" +
@@ -975,78 +1224,94 @@ func file_message_message_proto_rawDescGZIP() []byte {
 	return file_message_message_proto_rawDescData
 }
 
-var file_message_message_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_message_message_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_message_message_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_message_message_proto_goTypes = []any{
-	(*Transaction)(nil),           // 0: message.Transaction
-	(*ClientRequest)(nil),         // 1: message.ClientRequest
-	(*BallotNumber)(nil),          // 2: message.BallotNumber
-	(*AcceptMessage)(nil),         // 3: message.AcceptMessage
-	(*AcceptedMessage)(nil),       // 4: message.AcceptedMessage
-	(*CommitMessage)(nil),         // 5: message.CommitMessage
-	(*ReplyMessage)(nil),          // 6: message.ReplyMessage
-	(*PrepareMessage)(nil),        // 7: message.PrepareMessage
-	(*PromiseMessage)(nil),        // 8: message.PromiseMessage
-	(*NewViewMessage)(nil),        // 9: message.NewViewMessage
-	(*CheckpointMessage)(nil),     // 10: message.CheckpointMessage
-	(*StateTranserRequest)(nil),   // 11: message.StateTranserRequest
-	(*StateTransferResponse)(nil), // 12: message.StateTransferResponse
-	(*PrintBalanceReq)(nil),       // 13: message.PrintBalanceReq
-	nil,                           // 14: message.StateTransferResponse.StateEntry
-	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),         // 16: google.protobuf.Empty
+	(AcceptType)(0),               // 0: message.AcceptType
+	(*Transaction)(nil),           // 1: message.Transaction
+	(*ClientRequest)(nil),         // 2: message.ClientRequest
+	(*BallotNumber)(nil),          // 3: message.BallotNumber
+	(*AcceptMessage)(nil),         // 4: message.AcceptMessage
+	(*AcceptedMessage)(nil),       // 5: message.AcceptedMessage
+	(*CommitMessage)(nil),         // 6: message.CommitMessage
+	(*ReplyMessage)(nil),          // 7: message.ReplyMessage
+	(*PrepareMessage)(nil),        // 8: message.PrepareMessage
+	(*PromiseMessage)(nil),        // 9: message.PromiseMessage
+	(*NewViewMessage)(nil),        // 10: message.NewViewMessage
+	(*CheckpointMessage)(nil),     // 11: message.CheckpointMessage
+	(*StateTranserRequest)(nil),   // 12: message.StateTranserRequest
+	(*StateTransferResponse)(nil), // 13: message.StateTransferResponse
+	(*TwoPCPrepareMessage)(nil),   // 14: message.TwoPCPrepareMessage
+	(*TwoPCPreparedMessage)(nil),  // 15: message.TwoPCPreparedMessage
+	(*TwoPCAbortMessage)(nil),     // 16: message.TwoPCAbortMessage
+	(*PrintBalanceReq)(nil),       // 17: message.PrintBalanceReq
+	nil,                           // 18: message.StateTransferResponse.StateEntry
+	(*timestamppb.Timestamp)(nil), // 19: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),         // 20: google.protobuf.Empty
 }
 var file_message_message_proto_depIdxs = []int32{
-	15, // 0: message.ClientRequest.Timestamp:type_name -> google.protobuf.Timestamp
-	0,  // 1: message.ClientRequest.Transaction:type_name -> message.Transaction
-	2,  // 2: message.AcceptMessage.Ballot:type_name -> message.BallotNumber
-	1,  // 3: message.AcceptMessage.Request:type_name -> message.ClientRequest
-	2,  // 4: message.AcceptedMessage.Ballot:type_name -> message.BallotNumber
-	1,  // 5: message.AcceptedMessage.Request:type_name -> message.ClientRequest
-	2,  // 6: message.CommitMessage.Ballot:type_name -> message.BallotNumber
-	1,  // 7: message.CommitMessage.Request:type_name -> message.ClientRequest
-	2,  // 8: message.ReplyMessage.Ballot:type_name -> message.BallotNumber
-	15, // 9: message.ReplyMessage.ClientRequestTimestamp:type_name -> google.protobuf.Timestamp
-	2,  // 10: message.PrepareMessage.Ballot:type_name -> message.BallotNumber
-	2,  // 11: message.PromiseMessage.Ballot:type_name -> message.BallotNumber
-	4,  // 12: message.PromiseMessage.AcceptLog:type_name -> message.AcceptedMessage
-	2,  // 13: message.NewViewMessage.Ballot:type_name -> message.BallotNumber
-	4,  // 14: message.NewViewMessage.AcceptLog:type_name -> message.AcceptedMessage
-	14, // 15: message.StateTransferResponse.State:type_name -> message.StateTransferResponse.StateEntry
-	1,  // 16: message.MessageService.SendRequestMessage:input_type -> message.ClientRequest
-	3,  // 17: message.MessageService.HandleAccept:input_type -> message.AcceptMessage
-	4,  // 18: message.MessageService.HandleAccepted:input_type -> message.AcceptedMessage
-	5,  // 19: message.MessageService.HandleCommit:input_type -> message.CommitMessage
-	7,  // 20: message.MessageService.HandlePrepare:input_type -> message.PrepareMessage
-	8,  // 21: message.MessageService.HandlePromise:input_type -> message.PromiseMessage
-	9,  // 22: message.MessageService.HandleNewView:input_type -> message.NewViewMessage
-	10, // 23: message.MessageService.HandleCheckpoint:input_type -> message.CheckpointMessage
-	11, // 24: message.MessageService.MakeStateTransferRequest:input_type -> message.StateTranserRequest
-	12, // 25: message.MessageService.HandleStateTransferResponse:input_type -> message.StateTransferResponse
-	16, // 26: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
-	16, // 27: message.MessageService.FailNode:input_type -> google.protobuf.Empty
-	16, // 28: message.MessageService.RecoverNode:input_type -> google.protobuf.Empty
-	13, // 29: message.MessageService.PrintBalance:input_type -> message.PrintBalanceReq
-	6,  // 30: message.ClientService.HandleReply:input_type -> message.ReplyMessage
-	16, // 31: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
-	16, // 32: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
-	16, // 33: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
-	16, // 34: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
-	16, // 35: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
-	16, // 36: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
-	16, // 37: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
-	16, // 38: message.MessageService.HandleCheckpoint:output_type -> google.protobuf.Empty
-	16, // 39: message.MessageService.MakeStateTransferRequest:output_type -> google.protobuf.Empty
-	16, // 40: message.MessageService.HandleStateTransferResponse:output_type -> google.protobuf.Empty
-	16, // 41: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
-	16, // 42: message.MessageService.FailNode:output_type -> google.protobuf.Empty
-	16, // 43: message.MessageService.RecoverNode:output_type -> google.protobuf.Empty
-	16, // 44: message.MessageService.PrintBalance:output_type -> google.protobuf.Empty
-	16, // 45: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
-	31, // [31:46] is the sub-list for method output_type
-	16, // [16:31] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	19, // 0: message.ClientRequest.Timestamp:type_name -> google.protobuf.Timestamp
+	1,  // 1: message.ClientRequest.Transaction:type_name -> message.Transaction
+	3,  // 2: message.AcceptMessage.Ballot:type_name -> message.BallotNumber
+	2,  // 3: message.AcceptMessage.Request:type_name -> message.ClientRequest
+	0,  // 4: message.AcceptMessage.AcceptType:type_name -> message.AcceptType
+	3,  // 5: message.AcceptedMessage.Ballot:type_name -> message.BallotNumber
+	2,  // 6: message.AcceptedMessage.Request:type_name -> message.ClientRequest
+	3,  // 7: message.CommitMessage.Ballot:type_name -> message.BallotNumber
+	2,  // 8: message.CommitMessage.Request:type_name -> message.ClientRequest
+	0,  // 9: message.CommitMessage.AcceptType:type_name -> message.AcceptType
+	3,  // 10: message.ReplyMessage.Ballot:type_name -> message.BallotNumber
+	19, // 11: message.ReplyMessage.ClientRequestTimestamp:type_name -> google.protobuf.Timestamp
+	3,  // 12: message.PrepareMessage.Ballot:type_name -> message.BallotNumber
+	3,  // 13: message.PromiseMessage.Ballot:type_name -> message.BallotNumber
+	5,  // 14: message.PromiseMessage.AcceptLog:type_name -> message.AcceptedMessage
+	3,  // 15: message.NewViewMessage.Ballot:type_name -> message.BallotNumber
+	5,  // 16: message.NewViewMessage.AcceptLog:type_name -> message.AcceptedMessage
+	18, // 17: message.StateTransferResponse.State:type_name -> message.StateTransferResponse.StateEntry
+	2,  // 18: message.TwoPCPrepareMessage.Request:type_name -> message.ClientRequest
+	2,  // 19: message.TwoPCPreparedMessage.Request:type_name -> message.ClientRequest
+	2,  // 20: message.TwoPCAbortMessage.Request:type_name -> message.ClientRequest
+	2,  // 21: message.MessageService.SendRequestMessage:input_type -> message.ClientRequest
+	4,  // 22: message.MessageService.HandleAccept:input_type -> message.AcceptMessage
+	5,  // 23: message.MessageService.HandleAccepted:input_type -> message.AcceptedMessage
+	6,  // 24: message.MessageService.HandleCommit:input_type -> message.CommitMessage
+	8,  // 25: message.MessageService.HandlePrepare:input_type -> message.PrepareMessage
+	9,  // 26: message.MessageService.HandlePromise:input_type -> message.PromiseMessage
+	10, // 27: message.MessageService.HandleNewView:input_type -> message.NewViewMessage
+	11, // 28: message.MessageService.HandleCheckpoint:input_type -> message.CheckpointMessage
+	12, // 29: message.MessageService.MakeStateTransferRequest:input_type -> message.StateTranserRequest
+	13, // 30: message.MessageService.HandleStateTransferResponse:input_type -> message.StateTransferResponse
+	14, // 31: message.MessageService.HandleTwoPCPrepare:input_type -> message.TwoPCPrepareMessage
+	15, // 32: message.MessageService.HandleTwoPCPrepared:input_type -> message.TwoPCPreparedMessage
+	16, // 33: message.MessageService.HandleTwoPCAbort:input_type -> message.TwoPCAbortMessage
+	20, // 34: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
+	20, // 35: message.MessageService.FailNode:input_type -> google.protobuf.Empty
+	20, // 36: message.MessageService.RecoverNode:input_type -> google.protobuf.Empty
+	17, // 37: message.MessageService.PrintBalance:input_type -> message.PrintBalanceReq
+	7,  // 38: message.ClientService.HandleReply:input_type -> message.ReplyMessage
+	20, // 39: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
+	20, // 40: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
+	20, // 41: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
+	20, // 42: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
+	20, // 43: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
+	20, // 44: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
+	20, // 45: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
+	20, // 46: message.MessageService.HandleCheckpoint:output_type -> google.protobuf.Empty
+	20, // 47: message.MessageService.MakeStateTransferRequest:output_type -> google.protobuf.Empty
+	20, // 48: message.MessageService.HandleStateTransferResponse:output_type -> google.protobuf.Empty
+	20, // 49: message.MessageService.HandleTwoPCPrepare:output_type -> google.protobuf.Empty
+	20, // 50: message.MessageService.HandleTwoPCPrepared:output_type -> google.protobuf.Empty
+	20, // 51: message.MessageService.HandleTwoPCAbort:output_type -> google.protobuf.Empty
+	20, // 52: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
+	20, // 53: message.MessageService.FailNode:output_type -> google.protobuf.Empty
+	20, // 54: message.MessageService.RecoverNode:output_type -> google.protobuf.Empty
+	20, // 55: message.MessageService.PrintBalance:output_type -> google.protobuf.Empty
+	20, // 56: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
+	39, // [39:57] is the sub-list for method output_type
+	21, // [21:39] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_message_message_proto_init() }
@@ -1059,13 +1324,14 @@ func file_message_message_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_message_message_proto_rawDesc), len(file_message_message_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   15,
+			NumEnums:      1,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   2,
 		},
 		GoTypes:           file_message_message_proto_goTypes,
 		DependencyIndexes: file_message_message_proto_depIdxs,
+		EnumInfos:         file_message_message_proto_enumTypes,
 		MessageInfos:      file_message_message_proto_msgTypes,
 	}.Build()
 	File_message_message_proto = out.File

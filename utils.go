@@ -71,6 +71,9 @@ func (node *Node) requestsAreEqual(r1, r2 *pb.ClientRequest) bool {
     return r1.ClientId == r2.ClientId && r1.Timestamp.AsTime().Equal(r2.Timestamp.AsTime())
 }
 
+func (node *Node) areTwoPCPrepareEqual(m1, m2 *pb.TwoPCPrepareMessage) bool{
+    return m1.NodeId == m2.NodeId && node.requestsAreEqual(m1.Request,m2.Request)
+}
 
 func (node *Node) computeStateDigest() (string, error) {
 	iter,_ := node.state.NewIter(nil)
@@ -141,6 +144,27 @@ func isIntraShard(req *pb.ClientRequest) bool {
     receiverCluster := getClusterId(int32(receiverInt))
     
     return senderCluster == receiverCluster
+}
+
+func datapointInShard(datapoint string,clusterId int32) bool{
+    datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
+    
+    targetClusterId := getClusterId(int32(datapointInt))
+
+    return targetClusterId == clusterId
+}
+
+func(node *Node) findTargetLeaderId(datapoint string) (int32) {
+    datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
+    
+    targetClusterId := getClusterId(int32(datapointInt))
+    log.Printf("[Node %d] target cluster Id=%d",node.nodeId,targetClusterId)
+
+    node.muCluster.RLock()
+    targetLeaderId := node.clusterInfo[targetClusterId].LeaderId
+    node.muCluster.RUnlock()
+    log.Printf("[Node %d] targetLeaderId=%d",node.nodeId,targetLeaderId)
+    return targetLeaderId
 }
 
 func (node *Node) Activate() {

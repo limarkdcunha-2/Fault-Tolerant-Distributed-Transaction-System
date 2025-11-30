@@ -38,6 +38,9 @@ const (
 	MessageService_HandleCheckpoint_FullMethodName            = "/message.MessageService/HandleCheckpoint"
 	MessageService_MakeStateTransferRequest_FullMethodName    = "/message.MessageService/MakeStateTransferRequest"
 	MessageService_HandleStateTransferResponse_FullMethodName = "/message.MessageService/HandleStateTransferResponse"
+	MessageService_HandleTwoPCPrepare_FullMethodName          = "/message.MessageService/HandleTwoPCPrepare"
+	MessageService_HandleTwoPCPrepared_FullMethodName         = "/message.MessageService/HandleTwoPCPrepared"
+	MessageService_HandleTwoPCAbort_FullMethodName            = "/message.MessageService/HandleTwoPCAbort"
 	MessageService_PrintAcceptLog_FullMethodName              = "/message.MessageService/PrintAcceptLog"
 	MessageService_FailNode_FullMethodName                    = "/message.MessageService/FailNode"
 	MessageService_RecoverNode_FullMethodName                 = "/message.MessageService/RecoverNode"
@@ -58,6 +61,9 @@ type MessageServiceClient interface {
 	HandleCheckpoint(ctx context.Context, in *CheckpointMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	MakeStateTransferRequest(ctx context.Context, in *StateTranserRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleStateTransferResponse(ctx context.Context, in *StateTransferResponse, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleTwoPCPrepare(ctx context.Context, in *TwoPCPrepareMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleTwoPCPrepared(ctx context.Context, in *TwoPCPreparedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleTwoPCAbort(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// Project helpers
 	PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	FailNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -173,6 +179,36 @@ func (c *messageServiceClient) HandleStateTransferResponse(ctx context.Context, 
 	return out, nil
 }
 
+func (c *messageServiceClient) HandleTwoPCPrepare(ctx context.Context, in *TwoPCPrepareMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCPrepare_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) HandleTwoPCPrepared(ctx context.Context, in *TwoPCPreparedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCPrepared_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) HandleTwoPCAbort(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCAbort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *messageServiceClient) PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -227,6 +263,9 @@ type MessageServiceServer interface {
 	HandleCheckpoint(context.Context, *CheckpointMessage) (*emptypb.Empty, error)
 	MakeStateTransferRequest(context.Context, *StateTranserRequest) (*emptypb.Empty, error)
 	HandleStateTransferResponse(context.Context, *StateTransferResponse) (*emptypb.Empty, error)
+	HandleTwoPCPrepare(context.Context, *TwoPCPrepareMessage) (*emptypb.Empty, error)
+	HandleTwoPCPrepared(context.Context, *TwoPCPreparedMessage) (*emptypb.Empty, error)
+	HandleTwoPCAbort(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error)
 	// Project helpers
 	PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	FailNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
@@ -271,6 +310,15 @@ func (UnimplementedMessageServiceServer) MakeStateTransferRequest(context.Contex
 }
 func (UnimplementedMessageServiceServer) HandleStateTransferResponse(context.Context, *StateTransferResponse) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleStateTransferResponse not implemented")
+}
+func (UnimplementedMessageServiceServer) HandleTwoPCPrepare(context.Context, *TwoPCPrepareMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCPrepare not implemented")
+}
+func (UnimplementedMessageServiceServer) HandleTwoPCPrepared(context.Context, *TwoPCPreparedMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCPrepared not implemented")
+}
+func (UnimplementedMessageServiceServer) HandleTwoPCAbort(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCAbort not implemented")
 }
 func (UnimplementedMessageServiceServer) PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintAcceptLog not implemented")
@@ -485,6 +533,60 @@ func _MessageService_HandleStateTransferResponse_Handler(srv interface{}, ctx co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_HandleTwoPCPrepare_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TwoPCPrepareMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandleTwoPCPrepare(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandleTwoPCPrepare_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandleTwoPCPrepare(ctx, req.(*TwoPCPrepareMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_HandleTwoPCPrepared_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TwoPCPreparedMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandleTwoPCPrepared(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandleTwoPCPrepared_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandleTwoPCPrepared(ctx, req.(*TwoPCPreparedMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_HandleTwoPCAbort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TwoPCAbortMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandleTwoPCAbort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandleTwoPCAbort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandleTwoPCAbort(ctx, req.(*TwoPCAbortMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MessageService_PrintAcceptLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -603,6 +705,18 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HandleStateTransferResponse",
 			Handler:    _MessageService_HandleStateTransferResponse_Handler,
+		},
+		{
+			MethodName: "HandleTwoPCPrepare",
+			Handler:    _MessageService_HandleTwoPCPrepare_Handler,
+		},
+		{
+			MethodName: "HandleTwoPCPrepared",
+			Handler:    _MessageService_HandleTwoPCPrepared_Handler,
+		},
+		{
+			MethodName: "HandleTwoPCAbort",
+			Handler:    _MessageService_HandleTwoPCAbort_Handler,
 		},
 		{
 			MethodName: "PrintAcceptLog",

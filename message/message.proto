@@ -33,10 +33,18 @@ message BallotNumber {
     int32 RoundNumber = 2;
 }
 
+enum AcceptType {
+  INTRA_SHARD = 0;
+  PREPARE = 1;
+  ABORT = 2;
+  COMMIT = 3;
+}
+
 message AcceptMessage {
   BallotNumber Ballot = 1;
   int32 SequenceNum = 2;
   ClientRequest Request = 3;
+  AcceptType AcceptType = 4;
 }
 
 message AcceptedMessage {
@@ -50,6 +58,7 @@ message CommitMessage {
   BallotNumber Ballot = 1;
   int32 SequenceNum = 2;
   ClientRequest Request = 3;
+  AcceptType AcceptType = 4;
 }
 
 message ReplyMessage {
@@ -98,6 +107,21 @@ message StateTransferResponse {
   map<string, int32> State = 2;
 }
 
+message TwoPCPrepareMessage{
+  ClientRequest Request = 1;
+  int32 NodeId = 2;
+}
+
+message TwoPCPreparedMessage{
+  ClientRequest Request = 1;
+  int32 NodeId = 2;
+}
+
+message TwoPCAbortMessage{
+  ClientRequest Request = 1;
+  int32 NodeId = 2;
+}
+
 message PrintBalanceReq {
   string Datapoint = 1;
 }
@@ -114,6 +138,10 @@ service MessageService {
   rpc HandleCheckpoint(CheckpointMessage) returns (google.protobuf.Empty);
   rpc MakeStateTransferRequest(StateTranserRequest) returns (google.protobuf.Empty);
   rpc HandleStateTransferResponse(StateTransferResponse) returns (google.protobuf.Empty);
+
+  rpc HandleTwoPCPrepare(TwoPCPrepareMessage) returns (google.protobuf.Empty);
+  rpc HandleTwoPCPrepared(TwoPCPreparedMessage) returns (google.protobuf.Empty);
+  rpc HandleTwoPCAbort(TwoPCAbortMessage) returns (google.protobuf.Empty);
 
   // Project helpers
   rpc PrintAcceptLog(google.protobuf.Empty) returns (google.protobuf.Empty);

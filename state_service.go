@@ -289,17 +289,17 @@ func(node *Node) checkIfSufficientBalance(sender string, amount int32) (bool){
 
     if err != nil {
         if err == pebble.ErrNotFound {
-            log.Printf("[Node %d] Pebble data error 1")
+            log.Printf("[Node %d] Pebble data error 1",node.nodeId)
             return false
         }
-        log.Printf("[Node %d] Pebble data error 2")
+        log.Printf("[Node %d] Pebble data error 2",node.nodeId)
         return false
     }
 
     senderBalance, err := deserializeBalance(senderData)
     senderCloser.Close()
     if err != nil {
-        log.Printf("[Node %d] Pebble data error 3")
+        log.Printf("[Node %d] Pebble data error 3",node.nodeId)
         return false
     }
 

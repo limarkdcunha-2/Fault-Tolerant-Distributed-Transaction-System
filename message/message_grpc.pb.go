@@ -28,23 +28,25 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MessageService_SendRequestMessage_FullMethodName          = "/message.MessageService/SendRequestMessage"
-	MessageService_HandleAccept_FullMethodName                = "/message.MessageService/HandleAccept"
-	MessageService_HandleAccepted_FullMethodName              = "/message.MessageService/HandleAccepted"
-	MessageService_HandleCommit_FullMethodName                = "/message.MessageService/HandleCommit"
-	MessageService_HandlePrepare_FullMethodName               = "/message.MessageService/HandlePrepare"
-	MessageService_HandlePromise_FullMethodName               = "/message.MessageService/HandlePromise"
-	MessageService_HandleNewView_FullMethodName               = "/message.MessageService/HandleNewView"
-	MessageService_HandleCheckpoint_FullMethodName            = "/message.MessageService/HandleCheckpoint"
-	MessageService_MakeStateTransferRequest_FullMethodName    = "/message.MessageService/MakeStateTransferRequest"
-	MessageService_HandleStateTransferResponse_FullMethodName = "/message.MessageService/HandleStateTransferResponse"
-	MessageService_HandleTwoPCPrepare_FullMethodName          = "/message.MessageService/HandleTwoPCPrepare"
-	MessageService_HandleTwoPCPrepared_FullMethodName         = "/message.MessageService/HandleTwoPCPrepared"
-	MessageService_HandleTwoPCAbort_FullMethodName            = "/message.MessageService/HandleTwoPCAbort"
-	MessageService_PrintAcceptLog_FullMethodName              = "/message.MessageService/PrintAcceptLog"
-	MessageService_FailNode_FullMethodName                    = "/message.MessageService/FailNode"
-	MessageService_RecoverNode_FullMethodName                 = "/message.MessageService/RecoverNode"
-	MessageService_PrintBalance_FullMethodName                = "/message.MessageService/PrintBalance"
+	MessageService_SendRequestMessage_FullMethodName            = "/message.MessageService/SendRequestMessage"
+	MessageService_HandleAccept_FullMethodName                  = "/message.MessageService/HandleAccept"
+	MessageService_HandleAccepted_FullMethodName                = "/message.MessageService/HandleAccepted"
+	MessageService_HandleCommit_FullMethodName                  = "/message.MessageService/HandleCommit"
+	MessageService_HandlePrepare_FullMethodName                 = "/message.MessageService/HandlePrepare"
+	MessageService_HandlePromise_FullMethodName                 = "/message.MessageService/HandlePromise"
+	MessageService_HandleNewView_FullMethodName                 = "/message.MessageService/HandleNewView"
+	MessageService_HandleCheckpoint_FullMethodName              = "/message.MessageService/HandleCheckpoint"
+	MessageService_MakeStateTransferRequest_FullMethodName      = "/message.MessageService/MakeStateTransferRequest"
+	MessageService_HandleStateTransferResponse_FullMethodName   = "/message.MessageService/HandleStateTransferResponse"
+	MessageService_HandleTwoPCPrepare_FullMethodName            = "/message.MessageService/HandleTwoPCPrepare"
+	MessageService_HandleTwoPCPrepared_FullMethodName           = "/message.MessageService/HandleTwoPCPrepared"
+	MessageService_HandleTwoPCAbortAsCoordinator_FullMethodName = "/message.MessageService/HandleTwoPCAbortAsCoordinator"
+	MessageService_HandleTwoPCCommit_FullMethodName             = "/message.MessageService/HandleTwoPCCommit"
+	MessageService_HandleTwoPCAck_FullMethodName                = "/message.MessageService/HandleTwoPCAck"
+	MessageService_PrintAcceptLog_FullMethodName                = "/message.MessageService/PrintAcceptLog"
+	MessageService_FailNode_FullMethodName                      = "/message.MessageService/FailNode"
+	MessageService_RecoverNode_FullMethodName                   = "/message.MessageService/RecoverNode"
+	MessageService_PrintBalance_FullMethodName                  = "/message.MessageService/PrintBalance"
 )
 
 // MessageServiceClient is the client API for MessageService service.
@@ -63,7 +65,9 @@ type MessageServiceClient interface {
 	HandleStateTransferResponse(ctx context.Context, in *StateTransferResponse, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleTwoPCPrepare(ctx context.Context, in *TwoPCPrepareMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleTwoPCPrepared(ctx context.Context, in *TwoPCPreparedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	HandleTwoPCAbort(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleTwoPCAbortAsCoordinator(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleTwoPCCommit(ctx context.Context, in *TwoPCCommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleTwoPCAck(ctx context.Context, in *TwoPCAckMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// Project helpers
 	PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	FailNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -199,10 +203,30 @@ func (c *messageServiceClient) HandleTwoPCPrepared(ctx context.Context, in *TwoP
 	return out, nil
 }
 
-func (c *messageServiceClient) HandleTwoPCAbort(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *messageServiceClient) HandleTwoPCAbortAsCoordinator(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCAbort_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCAbortAsCoordinator_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) HandleTwoPCCommit(ctx context.Context, in *TwoPCCommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCCommit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) HandleTwoPCAck(ctx context.Context, in *TwoPCAckMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCAck_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +289,9 @@ type MessageServiceServer interface {
 	HandleStateTransferResponse(context.Context, *StateTransferResponse) (*emptypb.Empty, error)
 	HandleTwoPCPrepare(context.Context, *TwoPCPrepareMessage) (*emptypb.Empty, error)
 	HandleTwoPCPrepared(context.Context, *TwoPCPreparedMessage) (*emptypb.Empty, error)
-	HandleTwoPCAbort(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error)
+	HandleTwoPCAbortAsCoordinator(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error)
+	HandleTwoPCCommit(context.Context, *TwoPCCommitMessage) (*emptypb.Empty, error)
+	HandleTwoPCAck(context.Context, *TwoPCAckMessage) (*emptypb.Empty, error)
 	// Project helpers
 	PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	FailNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
@@ -317,8 +343,14 @@ func (UnimplementedMessageServiceServer) HandleTwoPCPrepare(context.Context, *Tw
 func (UnimplementedMessageServiceServer) HandleTwoPCPrepared(context.Context, *TwoPCPreparedMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCPrepared not implemented")
 }
-func (UnimplementedMessageServiceServer) HandleTwoPCAbort(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCAbort not implemented")
+func (UnimplementedMessageServiceServer) HandleTwoPCAbortAsCoordinator(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCAbortAsCoordinator not implemented")
+}
+func (UnimplementedMessageServiceServer) HandleTwoPCCommit(context.Context, *TwoPCCommitMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCCommit not implemented")
+}
+func (UnimplementedMessageServiceServer) HandleTwoPCAck(context.Context, *TwoPCAckMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCAck not implemented")
 }
 func (UnimplementedMessageServiceServer) PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintAcceptLog not implemented")
@@ -569,20 +601,56 @@ func _MessageService_HandleTwoPCPrepared_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MessageService_HandleTwoPCAbort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MessageService_HandleTwoPCAbortAsCoordinator_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(TwoPCAbortMessage)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MessageServiceServer).HandleTwoPCAbort(ctx, in)
+		return srv.(MessageServiceServer).HandleTwoPCAbortAsCoordinator(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: MessageService_HandleTwoPCAbort_FullMethodName,
+		FullMethod: MessageService_HandleTwoPCAbortAsCoordinator_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MessageServiceServer).HandleTwoPCAbort(ctx, req.(*TwoPCAbortMessage))
+		return srv.(MessageServiceServer).HandleTwoPCAbortAsCoordinator(ctx, req.(*TwoPCAbortMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_HandleTwoPCCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TwoPCCommitMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandleTwoPCCommit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandleTwoPCCommit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandleTwoPCCommit(ctx, req.(*TwoPCCommitMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_HandleTwoPCAck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TwoPCAckMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandleTwoPCAck(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandleTwoPCAck_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandleTwoPCAck(ctx, req.(*TwoPCAckMessage))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -715,8 +783,16 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _MessageService_HandleTwoPCPrepared_Handler,
 		},
 		{
-			MethodName: "HandleTwoPCAbort",
-			Handler:    _MessageService_HandleTwoPCAbort_Handler,
+			MethodName: "HandleTwoPCAbortAsCoordinator",
+			Handler:    _MessageService_HandleTwoPCAbortAsCoordinator_Handler,
+		},
+		{
+			MethodName: "HandleTwoPCCommit",
+			Handler:    _MessageService_HandleTwoPCCommit_Handler,
+		},
+		{
+			MethodName: "HandleTwoPCAck",
+			Handler:    _MessageService_HandleTwoPCAck_Handler,
 		},
 		{
 			MethodName: "PrintAcceptLog",

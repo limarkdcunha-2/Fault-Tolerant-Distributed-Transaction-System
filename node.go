@@ -45,7 +45,6 @@ const (
 )
 
 
-
 type LogEntry struct {
 	mu sync.RWMutex
 	SequenceNum  int32
@@ -54,6 +53,9 @@ type LogEntry struct {
 	AcceptedMessages map[int32] *pb.AcceptedMessage
 	AcceptCount int32
 	Phase Phase
+	TwoPCAcceptedMessages map[int32] *pb.AcceptedMessage
+	TwoPCAcceptCount int32
+	TwoPCPhase Phase
 	Status LogEntryStatus
 	EntryAcceptType pb.AcceptType
 }
@@ -73,6 +75,7 @@ type CrossShardTrans struct {
 	Ballot *pb.BallotNumber
 	Request *pb.ClientRequest
 	Timer *CustomTimer
+	isAckReceived bool
 }
 
 type Node struct {
@@ -141,6 +144,10 @@ type Node struct {
 	muCrossSharTxs sync.RWMutex
 	crossSharTxs map[string]*CrossShardTrans
 
+	// Only leader of coordinator cluster has to maintain
+	muPendingAckReplies sync.RWMutex
+	pendingAckReplies map[string]*pb.ReplyMessage
+
 	peers map[int32]pb.MessageServiceClient
 	clientSideGrpcClient pb.ClientServiceClient
 }	
@@ -179,6 +186,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		requestsQueue:make([]*pb.ClientRequest, 0),
 		clusterInfo: make(map[int32]*ClusterInfo),
 		crossSharTxs:make(map[string]*CrossShardTrans),
+		pendingAckReplies:make(map[string]*pb.ReplyMessage),
 	}
 
 	randomTime := time.Duration(rand.Intn(100)+100) * time.Millisecond
@@ -327,7 +335,7 @@ func (node *Node) cacheReplyAndClearPending(reply *pb.ReplyMessage) {
     // Remove from pending
     node.removePendingRequest(reply.ClientId, reply.ClientRequestTimestamp)
     
-   node.RecordReply(reply)
+   	node.RecordReply(reply)
 }
 
 

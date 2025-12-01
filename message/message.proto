@@ -52,6 +52,7 @@ message AcceptedMessage {
   int32 SequenceNum = 2;
   ClientRequest Request = 3;
   int32 NodeId = 4;
+  AcceptType AcceptType = 5;
 }
 
 message CommitMessage {
@@ -122,6 +123,17 @@ message TwoPCAbortMessage{
   int32 NodeId = 2;
 }
 
+message TwoPCCommitMessage{
+  ClientRequest Request = 1;
+  int32 NodeId = 2;
+}
+
+message TwoPCAckMessage{
+  ClientRequest Request = 1;
+  int32 NodeId = 2;
+  string AckType = 3;
+}
+
 message PrintBalanceReq {
   string Datapoint = 1;
 }
@@ -141,7 +153,9 @@ service MessageService {
 
   rpc HandleTwoPCPrepare(TwoPCPrepareMessage) returns (google.protobuf.Empty);
   rpc HandleTwoPCPrepared(TwoPCPreparedMessage) returns (google.protobuf.Empty);
-  rpc HandleTwoPCAbort(TwoPCAbortMessage) returns (google.protobuf.Empty);
+  rpc HandleTwoPCAbortAsCoordinator(TwoPCAbortMessage) returns (google.protobuf.Empty);
+  rpc HandleTwoPCCommit(TwoPCCommitMessage) returns (google.protobuf.Empty);
+  rpc HandleTwoPCAck(TwoPCAckMessage) returns (google.protobuf.Empty);
 
   // Project helpers
   rpc PrintAcceptLog(google.protobuf.Empty) returns (google.protobuf.Empty);

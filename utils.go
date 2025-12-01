@@ -158,13 +158,37 @@ func(node *Node) findTargetLeaderId(datapoint string) (int32) {
     datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
     
     targetClusterId := getClusterId(int32(datapointInt))
-    log.Printf("[Node %d] target cluster Id=%d",node.nodeId,targetClusterId)
+    // log.Printf("[Node %d] target cluster Id=%d",node.nodeId,targetClusterId)
 
     node.muCluster.RLock()
     targetLeaderId := node.clusterInfo[targetClusterId].LeaderId
     node.muCluster.RUnlock()
-    log.Printf("[Node %d] targetLeaderId=%d",node.nodeId,targetLeaderId)
+    // log.Printf("[Node %d] targetLeaderId=%d",node.nodeId,targetLeaderId)
     return targetLeaderId
+}
+
+func(node *Node) isAckReceived(req *pb.ClientRequest) bool {
+    node.muCrossSharTxs.RLock()
+    defer node.muCrossSharTxs.RUnlock()  
+
+    reqKey := makeRequestKey(req.ClientId,req.Timestamp)
+
+    tx,exists := node.crossSharTxs[reqKey]
+
+    if !exists {
+        return false
+    }
+    
+    return tx.isAckReceived
+}
+
+func(node *Node) markAckReceived(req *pb.ClientRequest) {
+    node.muCrossSharTxs.Lock()
+    defer node.muCrossSharTxs.Unlock()  
+
+    reqKey := makeRequestKey(req.ClientId,req.Timestamp)
+
+    node.crossSharTxs[reqKey].isAckReceived = true
 }
 
 func (node *Node) Activate() {
@@ -236,6 +260,7 @@ func (node *Node) PrintAcceptLogUtil() {
         ballotNodeId := entry.Ballot.NodeId
         entryStatus := entry.Status
         req := entry.Request
+        acceptType := entry.EntryAcceptType
         entry.mu.Unlock()
 
         status := "X"
@@ -251,12 +276,12 @@ func (node *Node) PrintAcceptLogUtil() {
 
         // Format and print based on request type
         if req != nil {
-			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | Request status=%s | (%s, %s, %d)\n",
-				sequenceNum, ballotRound,ballotNodeId, entryStatus,status,
+			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | AcceptType=%s | Request status=%s | (%s, %s, %d)\n",
+				sequenceNum, ballotRound,ballotNodeId, entryStatus,acceptType,status,
 				req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
         } else {
-            fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | Request status=%s | NO-OP\n",
-                sequenceNum, ballotRound,ballotNodeId,entryStatus, status)
+            fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | AcceptType=%s | Request status=%s | NO-OP\n",
+                sequenceNum, ballotRound,ballotNodeId,entryStatus,acceptType, status)
         }
     }
     

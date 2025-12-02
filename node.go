@@ -76,6 +76,7 @@ type CrossShardTrans struct {
 	Request *pb.ClientRequest
 	Timer *CustomTimer
 	isAckReceived bool
+	isCommitReceived bool
 }
 
 type Node struct {
@@ -299,6 +300,14 @@ func (node *Node) hasPendingWork() bool {
     node.muPending.RUnlock()
 
     return pendingCount > 0 
+}
+
+func (node *Node) hasPendingWorkBatchedVersion(batchLen int) bool {
+	node.muPending.RLock()
+    pendingCount := len(node.pendingRequests)
+    node.muPending.RUnlock()
+
+	return pendingCount > batchLen
 }
 
 func (node *Node) markRequestPending(clientId int32, timestamp *timestamppb.Timestamp) {

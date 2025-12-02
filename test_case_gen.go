@@ -10,14 +10,13 @@ import (
 )
 
 func gen_test_cases() {
-
-	participants := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
-	nodes := []string{"n1", "n2", "n3", "n4", "n5"}
+	nodes := []string{"n1", "n2", "n3", "n4", "n5","n6","n7","n8","n9"}
 
 	const sets = 1
-	const txPerSet = 100
+	const txPerSet = 20
+	const maxClient = 3000
 
-	f, err := os.Create("test100.csv")
+	f, err := os.Create("test20.csv")
 	if err != nil {
 		panic(err)
 	}
@@ -33,14 +32,14 @@ func gen_test_cases() {
 
 	for set := 1; set <= sets; set++ {
 		// Random live nodes between 4 and 7
-		numLive := 5 // 4-7 inclusive
+		numLive := 9 // 4-7 inclusive
 		live := randomSubset(nodes, numLive)
 		liveStr := "[" + strings.Join(live, ", ") + "]"
 
 		for i := 0; i < txPerSet; i++ {
-			src := participants[rand.Intn(len(participants))]
-			dst := participants[rand.Intn(len(participants))]
-			amt := rand.Intn(10) + 1 // 1-10
+			src := strconv.Itoa(rand.Intn(maxClient) + 1)
+            dst := strconv.Itoa(rand.Intn(maxClient) + 3001)
+			amt := rand.Intn(10) + 1
 
 			tx := fmt.Sprintf("(%s, %s, %d)", src, dst, amt)
 

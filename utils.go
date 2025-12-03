@@ -55,6 +55,32 @@ func (node *Node) getAllClusterNodes() []int32 {
 	return targetNodeIds
 }
 
+func (node *Node) updateLeaderIfNeededForCluster(sender string,leaderIdFromMsg int32){
+    senderIntVal, err := strconv.Atoi(sender) 
+    if err != nil {
+        log.Printf("[Node %d] Failed to convert value of client sender from string to int",node.nodeId)
+        return
+    }
+
+    clusterId := getClusterId(int32(senderIntVal))
+
+    node.muCluster.Lock()
+    defer node.muCluster.Unlock()
+
+    info,exists := node.clusterInfo[clusterId]
+
+    if !exists {
+        log.Printf("[[Node %d] Cluster info not present=%d",node.nodeId)
+        return
+	}
+
+    targetLeaderId := info.LeaderId
+
+    if targetLeaderId != leaderIdFromMsg{
+        info.LeaderId = targetLeaderId
+    }
+}
+
 func (node *Node) isLeader() bool {
 	node.muBallot.RLock()
 	defer node.muBallot.Unlock()

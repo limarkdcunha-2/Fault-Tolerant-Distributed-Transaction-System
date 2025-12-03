@@ -332,3 +332,66 @@ func (node *Node) getBalance(accountName string) (int32, error) {
     
     return balance, nil
 }
+
+
+func (node *Node) undoSenderDebit(sender string, amount int32) (bool, error) {
+    senderData, senderCloser, err := node.state.Get(accountKey(sender))
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            return false, fmt.Errorf("sender '%s' not found during undo", sender)
+        }
+        return false, fmt.Errorf("failed to read sender during undo: %v", err)
+    }
+
+    senderBalance, err := deserializeBalance(senderData)
+    senderCloser.Close()
+    if err != nil {
+        return false, fmt.Errorf("failed to deserialize sender balance during undo: %v", err)
+    }
+
+    newSenderBal := senderBalance + amount
+
+    batch := node.state.NewBatch()
+    defer batch.Close()
+
+    sData, _ := serializeBalance(newSenderBal)
+    if err := batch.Set(accountKey(sender), sData, nil); err != nil {
+        return false, err
+    }
+    if err := batch.Commit(pebble.NoSync); err != nil {
+        return false, err
+    }
+
+    return true, nil
+}
+
+func (node *Node) undoReceiverCredit(receiver string, amount int32) (bool, error) {
+    receiverData, receiverCloser, err := node.state.Get(accountKey(receiver))
+    if err != nil {
+        if err == pebble.ErrNotFound {
+            return false, fmt.Errorf("receiver '%s' not found during undo", receiver)
+        }
+        return false, fmt.Errorf("failed to read receiver during undo: %v", err)
+    }
+
+    receiverBalance, err := deserializeBalance(receiverData)
+    receiverCloser.Close()
+    if err != nil {
+        return false, fmt.Errorf("failed to deserialize receiver balance during undo: %v", err)
+    }
+
+    newReceiverBal := receiverBalance - amount
+
+    batch := node.state.NewBatch()
+    defer batch.Close()
+
+    rData, _ := serializeBalance(newReceiverBal)
+    if err := batch.Set(accountKey(receiver), rData, nil); err != nil {
+        return false, err
+    }
+    if err := batch.Commit(pebble.NoSync); err != nil {
+        return false, err
+    }
+
+    return true, nil
+}

@@ -1320,8 +1320,7 @@ const file_message_message_proto_rawDesc = "" +
 	"\aPREPARE\x10\x01\x12\t\n" +
 	"\x05ABORT\x10\x02\x12\n" +
 	"\n" +
-	"\x06COMMIT\x10\x032\xcd\n" +
-	"\n" +
+	"\x06COMMIT\x10\x032\xa2\v\n" +
 	"\x0eMessageService\x12D\n" +
 	"\x12SendRequestMessage\x12\x16.message.ClientRequest\x1a\x16.google.protobuf.Empty\x12>\n" +
 	"\fHandleAccept\x12\x16.message.AcceptMessage\x1a\x16.google.protobuf.Empty\x12B\n" +
@@ -1335,7 +1334,8 @@ const file_message_message_proto_rawDesc = "" +
 	"\x1bHandleStateTransferResponse\x12\x1e.message.StateTransferResponse\x1a\x16.google.protobuf.Empty\x12J\n" +
 	"\x12HandleTwoPCPrepare\x12\x1c.message.TwoPCPrepareMessage\x1a\x16.google.protobuf.Empty\x12L\n" +
 	"\x13HandleTwoPCPrepared\x12\x1d.message.TwoPCPreparedMessage\x1a\x16.google.protobuf.Empty\x12S\n" +
-	"\x1dHandleTwoPCAbortAsCoordinator\x12\x1a.message.TwoPCAbortMessage\x1a\x16.google.protobuf.Empty\x12H\n" +
+	"\x1dHandleTwoPCAbortAsCoordinator\x12\x1a.message.TwoPCAbortMessage\x1a\x16.google.protobuf.Empty\x12S\n" +
+	"\x1dHandleTwoPCAbortAsParticipant\x12\x1a.message.TwoPCAbortMessage\x1a\x16.google.protobuf.Empty\x12H\n" +
 	"\x11HandleTwoPCCommit\x12\x1b.message.TwoPCCommitMessage\x1a\x16.google.protobuf.Empty\x12B\n" +
 	"\x0eHandleTwoPCAck\x12\x18.message.TwoPCAckMessage\x1a\x16.google.protobuf.Empty\x12@\n" +
 	"\x0ePrintAcceptLog\x12\x16.google.protobuf.Empty\x1a\x16.google.protobuf.Empty\x12:\n" +
@@ -1422,35 +1422,37 @@ var file_message_message_proto_depIdxs = []int32{
 	14, // 34: message.MessageService.HandleTwoPCPrepare:input_type -> message.TwoPCPrepareMessage
 	15, // 35: message.MessageService.HandleTwoPCPrepared:input_type -> message.TwoPCPreparedMessage
 	16, // 36: message.MessageService.HandleTwoPCAbortAsCoordinator:input_type -> message.TwoPCAbortMessage
-	17, // 37: message.MessageService.HandleTwoPCCommit:input_type -> message.TwoPCCommitMessage
-	18, // 38: message.MessageService.HandleTwoPCAck:input_type -> message.TwoPCAckMessage
-	22, // 39: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
-	22, // 40: message.MessageService.FailNode:input_type -> google.protobuf.Empty
-	22, // 41: message.MessageService.RecoverNode:input_type -> google.protobuf.Empty
-	19, // 42: message.MessageService.PrintBalance:input_type -> message.PrintBalanceReq
-	7,  // 43: message.ClientService.HandleReply:input_type -> message.ReplyMessage
-	22, // 44: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
-	22, // 45: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
-	22, // 46: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
-	22, // 47: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
-	22, // 48: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
-	22, // 49: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
-	22, // 50: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
-	22, // 51: message.MessageService.HandleCheckpoint:output_type -> google.protobuf.Empty
-	22, // 52: message.MessageService.MakeStateTransferRequest:output_type -> google.protobuf.Empty
-	22, // 53: message.MessageService.HandleStateTransferResponse:output_type -> google.protobuf.Empty
-	22, // 54: message.MessageService.HandleTwoPCPrepare:output_type -> google.protobuf.Empty
-	22, // 55: message.MessageService.HandleTwoPCPrepared:output_type -> google.protobuf.Empty
-	22, // 56: message.MessageService.HandleTwoPCAbortAsCoordinator:output_type -> google.protobuf.Empty
-	22, // 57: message.MessageService.HandleTwoPCCommit:output_type -> google.protobuf.Empty
-	22, // 58: message.MessageService.HandleTwoPCAck:output_type -> google.protobuf.Empty
-	22, // 59: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
-	22, // 60: message.MessageService.FailNode:output_type -> google.protobuf.Empty
-	22, // 61: message.MessageService.RecoverNode:output_type -> google.protobuf.Empty
-	22, // 62: message.MessageService.PrintBalance:output_type -> google.protobuf.Empty
-	22, // 63: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
-	44, // [44:64] is the sub-list for method output_type
-	24, // [24:44] is the sub-list for method input_type
+	16, // 37: message.MessageService.HandleTwoPCAbortAsParticipant:input_type -> message.TwoPCAbortMessage
+	17, // 38: message.MessageService.HandleTwoPCCommit:input_type -> message.TwoPCCommitMessage
+	18, // 39: message.MessageService.HandleTwoPCAck:input_type -> message.TwoPCAckMessage
+	22, // 40: message.MessageService.PrintAcceptLog:input_type -> google.protobuf.Empty
+	22, // 41: message.MessageService.FailNode:input_type -> google.protobuf.Empty
+	22, // 42: message.MessageService.RecoverNode:input_type -> google.protobuf.Empty
+	19, // 43: message.MessageService.PrintBalance:input_type -> message.PrintBalanceReq
+	7,  // 44: message.ClientService.HandleReply:input_type -> message.ReplyMessage
+	22, // 45: message.MessageService.SendRequestMessage:output_type -> google.protobuf.Empty
+	22, // 46: message.MessageService.HandleAccept:output_type -> google.protobuf.Empty
+	22, // 47: message.MessageService.HandleAccepted:output_type -> google.protobuf.Empty
+	22, // 48: message.MessageService.HandleCommit:output_type -> google.protobuf.Empty
+	22, // 49: message.MessageService.HandlePrepare:output_type -> google.protobuf.Empty
+	22, // 50: message.MessageService.HandlePromise:output_type -> google.protobuf.Empty
+	22, // 51: message.MessageService.HandleNewView:output_type -> google.protobuf.Empty
+	22, // 52: message.MessageService.HandleCheckpoint:output_type -> google.protobuf.Empty
+	22, // 53: message.MessageService.MakeStateTransferRequest:output_type -> google.protobuf.Empty
+	22, // 54: message.MessageService.HandleStateTransferResponse:output_type -> google.protobuf.Empty
+	22, // 55: message.MessageService.HandleTwoPCPrepare:output_type -> google.protobuf.Empty
+	22, // 56: message.MessageService.HandleTwoPCPrepared:output_type -> google.protobuf.Empty
+	22, // 57: message.MessageService.HandleTwoPCAbortAsCoordinator:output_type -> google.protobuf.Empty
+	22, // 58: message.MessageService.HandleTwoPCAbortAsParticipant:output_type -> google.protobuf.Empty
+	22, // 59: message.MessageService.HandleTwoPCCommit:output_type -> google.protobuf.Empty
+	22, // 60: message.MessageService.HandleTwoPCAck:output_type -> google.protobuf.Empty
+	22, // 61: message.MessageService.PrintAcceptLog:output_type -> google.protobuf.Empty
+	22, // 62: message.MessageService.FailNode:output_type -> google.protobuf.Empty
+	22, // 63: message.MessageService.RecoverNode:output_type -> google.protobuf.Empty
+	22, // 64: message.MessageService.PrintBalance:output_type -> google.protobuf.Empty
+	22, // 65: message.ClientService.HandleReply:output_type -> google.protobuf.Empty
+	45, // [45:66] is the sub-list for method output_type
+	24, // [24:45] is the sub-list for method input_type
 	24, // [24:24] is the sub-list for extension type_name
 	24, // [24:24] is the sub-list for extension extendee
 	0,  // [0:24] is the sub-list for field type_name

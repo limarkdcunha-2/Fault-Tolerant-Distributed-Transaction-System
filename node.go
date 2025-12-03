@@ -149,6 +149,8 @@ type Node struct {
 	muPendingAckReplies sync.RWMutex
 	pendingAckReplies map[string]*pb.ReplyMessage
 
+	wal *WriteAheadLog
+
 	peers map[int32]pb.MessageServiceClient
 	clientSideGrpcClient pb.ClientServiceClient
 }	
@@ -203,6 +205,10 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		log: make([]*pb.PrepareMessage,0),
 		highestBallotPrepare: nil,
 	}
+
+	dataDir := fmt.Sprintf("./wal/node_%d", nodeId)
+	wal, _ := NewWriteAheadLog(nodeId, dataDir)
+	newNode.wal = wal
 
 	
 	newNode.buildClusterMap()

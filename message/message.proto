@@ -154,6 +154,7 @@ service MessageService {
   rpc HandleTwoPCPrepare(TwoPCPrepareMessage) returns (google.protobuf.Empty);
   rpc HandleTwoPCPrepared(TwoPCPreparedMessage) returns (google.protobuf.Empty);
   rpc HandleTwoPCAbortAsCoordinator(TwoPCAbortMessage) returns (google.protobuf.Empty);
+  rpc HandleTwoPCAbortAsParticipant(TwoPCAbortMessage) returns (google.protobuf.Empty);
   rpc HandleTwoPCCommit(TwoPCCommitMessage) returns (google.protobuf.Empty);
   rpc HandleTwoPCAck(TwoPCAckMessage) returns (google.protobuf.Empty);
 

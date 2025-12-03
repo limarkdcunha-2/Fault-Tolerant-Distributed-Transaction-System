@@ -41,6 +41,7 @@ const (
 	MessageService_HandleTwoPCPrepare_FullMethodName            = "/message.MessageService/HandleTwoPCPrepare"
 	MessageService_HandleTwoPCPrepared_FullMethodName           = "/message.MessageService/HandleTwoPCPrepared"
 	MessageService_HandleTwoPCAbortAsCoordinator_FullMethodName = "/message.MessageService/HandleTwoPCAbortAsCoordinator"
+	MessageService_HandleTwoPCAbortAsParticipant_FullMethodName = "/message.MessageService/HandleTwoPCAbortAsParticipant"
 	MessageService_HandleTwoPCCommit_FullMethodName             = "/message.MessageService/HandleTwoPCCommit"
 	MessageService_HandleTwoPCAck_FullMethodName                = "/message.MessageService/HandleTwoPCAck"
 	MessageService_PrintAcceptLog_FullMethodName                = "/message.MessageService/PrintAcceptLog"
@@ -66,6 +67,7 @@ type MessageServiceClient interface {
 	HandleTwoPCPrepare(ctx context.Context, in *TwoPCPrepareMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleTwoPCPrepared(ctx context.Context, in *TwoPCPreparedMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleTwoPCAbortAsCoordinator(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	HandleTwoPCAbortAsParticipant(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleTwoPCCommit(ctx context.Context, in *TwoPCCommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleTwoPCAck(ctx context.Context, in *TwoPCAckMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// Project helpers
@@ -213,6 +215,16 @@ func (c *messageServiceClient) HandleTwoPCAbortAsCoordinator(ctx context.Context
 	return out, nil
 }
 
+func (c *messageServiceClient) HandleTwoPCAbortAsParticipant(ctx context.Context, in *TwoPCAbortMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_HandleTwoPCAbortAsParticipant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *messageServiceClient) HandleTwoPCCommit(ctx context.Context, in *TwoPCCommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -290,6 +302,7 @@ type MessageServiceServer interface {
 	HandleTwoPCPrepare(context.Context, *TwoPCPrepareMessage) (*emptypb.Empty, error)
 	HandleTwoPCPrepared(context.Context, *TwoPCPreparedMessage) (*emptypb.Empty, error)
 	HandleTwoPCAbortAsCoordinator(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error)
+	HandleTwoPCAbortAsParticipant(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error)
 	HandleTwoPCCommit(context.Context, *TwoPCCommitMessage) (*emptypb.Empty, error)
 	HandleTwoPCAck(context.Context, *TwoPCAckMessage) (*emptypb.Empty, error)
 	// Project helpers
@@ -345,6 +358,9 @@ func (UnimplementedMessageServiceServer) HandleTwoPCPrepared(context.Context, *T
 }
 func (UnimplementedMessageServiceServer) HandleTwoPCAbortAsCoordinator(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCAbortAsCoordinator not implemented")
+}
+func (UnimplementedMessageServiceServer) HandleTwoPCAbortAsParticipant(context.Context, *TwoPCAbortMessage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCAbortAsParticipant not implemented")
 }
 func (UnimplementedMessageServiceServer) HandleTwoPCCommit(context.Context, *TwoPCCommitMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCCommit not implemented")
@@ -619,6 +635,24 @@ func _MessageService_HandleTwoPCAbortAsCoordinator_Handler(srv interface{}, ctx 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_HandleTwoPCAbortAsParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TwoPCAbortMessage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).HandleTwoPCAbortAsParticipant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_HandleTwoPCAbortAsParticipant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).HandleTwoPCAbortAsParticipant(ctx, req.(*TwoPCAbortMessage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MessageService_HandleTwoPCCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(TwoPCCommitMessage)
 	if err := dec(in); err != nil {
@@ -785,6 +819,10 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HandleTwoPCAbortAsCoordinator",
 			Handler:    _MessageService_HandleTwoPCAbortAsCoordinator_Handler,
+		},
+		{
+			MethodName: "HandleTwoPCAbortAsParticipant",
+			Handler:    _MessageService_HandleTwoPCAbortAsParticipant_Handler,
 		},
 		{
 			MethodName: "HandleTwoPCCommit",

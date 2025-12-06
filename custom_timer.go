@@ -47,7 +47,7 @@ func (ct *CustomTimer) Start() {
 		case <-timer.C:
 			// Timer expired naturally
 			ct.mu.Lock()
-			if ct.stopChan != currentStopChan {
+			if !ct.running || ct.stopChan != currentStopChan {
 				ct.mu.Unlock()
 				return
 			}

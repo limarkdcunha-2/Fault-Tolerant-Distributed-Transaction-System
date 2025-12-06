@@ -76,7 +76,7 @@ type CrossShardTrans struct {
 	Request *pb.ClientRequest
 	Timer *CustomTimer
 	isAckReceived bool
-	isCommitReceived bool
+	isCommitOrAbortReceived bool
 }
 
 type Node struct {
@@ -149,6 +149,9 @@ type Node struct {
 	muPendingAckReplies sync.RWMutex
 	pendingAckReplies map[string]*pb.ReplyMessage
 
+	muAck sync.RWMutex
+	ackReplies map[string]*pb.TwoPCAckMessage
+
 	wal *WriteAheadLog
 
 	peers map[int32]pb.MessageServiceClient
@@ -190,9 +193,10 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		clusterInfo: make(map[int32]*ClusterInfo),
 		crossSharTxs:make(map[string]*CrossShardTrans),
 		pendingAckReplies:make(map[string]*pb.ReplyMessage),
+		ackReplies:make(map[string]*pb.TwoPCAckMessage),
 	}
 
-	randomTime := time.Duration(rand.Intn(100)+100) * time.Millisecond
+	randomTime := time.Duration(rand.Intn(100)+200) * time.Millisecond
 	newNode.livenessTimer = NewCustomTimer(randomTime,newNode.onLivenessTimerExpired)
 
 	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)

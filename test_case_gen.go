@@ -13,10 +13,10 @@ func gen_test_cases() {
 	nodes := []string{"n1", "n2", "n3", "n4", "n5","n6","n7","n8","n9"}
 
 	const sets = 1
-	const txPerSet = 20
+	const txPerSet = 100
 	const maxClient = 3000
 
-	f, err := os.Create("test20.csv")
+	f, err := os.Create("test2.1k.csv")
 	if err != nil {
 		panic(err)
 	}

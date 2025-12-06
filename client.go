@@ -172,7 +172,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			}
 		}
 
-		result,ok := client.waitForReply(pending, 100*time.Millisecond)
+		result,ok := client.waitForReply(pending, 300*time.Millisecond)
 		if ok {
 			pending.mu.Lock()	
 			client.updateLeaderFromReply(pending.reply)
@@ -186,12 +186,14 @@ func (client *Client) SendTransaction(tx Transaction) string {
 
 		client.broadcastToAllNodes(req,targetNodeIds)
 
-		result,ok = client.waitForReply(pending, 200*time.Millisecond)
+		result,ok = client.waitForReply(pending, 500*time.Millisecond)
 		if ok {
 			pending.mu.Lock()
 			client.updateLeaderFromReply(pending.reply)
 			pending.mu.Unlock()
 			
+			log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+			result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 			return result
 		}
 	}

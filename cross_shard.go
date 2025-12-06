@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 	pb "transaction-processor/message"
 )
 
@@ -328,5 +329,7 @@ func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
 		if err != nil {
 			log.Printf("[Node %d] Failed to 2PC ABORT to node=%d",node.nodeId,targetLeaderId)
 		}
+		
+		time.Sleep(10*time.Millisecond)
 	}
 }

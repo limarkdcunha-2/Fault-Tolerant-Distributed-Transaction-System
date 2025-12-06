@@ -25,6 +25,7 @@ func main() {
 	serverMode := flag.Bool("s", false, "Run in server mode (spawn nodes)")
 	runnerMode := flag.Bool("r", false, "Run in runner mode (full simulation)")
 	testCasesGenMode := flag.Bool("t", false, "Run in to generate random test cases")
+	cleanupMode := flag.Bool("d", false, "Run in to generate random test cases")
 	
 	flag.Parse()
 
@@ -41,6 +42,8 @@ func main() {
 		runner.RunAllTestSets()
 	case *testCasesGenMode:
 		gen_test_cases()
+	case *cleanupMode:
+		CleanupPersistence()
 	default:
 		log.Println("Usage:")
 		log.Println("  go run . -s node <id> <servicePort> <controlPort>  (Run a single node)")

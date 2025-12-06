@@ -171,10 +171,9 @@ func(node *Node) handleAbortActions(reqKey string){
 		log.Printf("[Node %d] UNDO COMPLETE: Sender %s credited back %d", 
             node.nodeId, walEntry.Sender, walEntry.Amount)
 
-		node.muState.Lock()
 		node.releaseLock(walEntry.Sender)
+
 		log.Printf("[Node %d] Released lock on datapoint (%s)",node.nodeId,walEntry.Sender)
-		node.muState.Unlock()
 	} else if walEntry.Role == WALRoleReceiverSide {
 		log.Printf("[Node %d] UNDO: Debiting receiver %s by %d (reversing credit)",
             node.nodeId, walEntry.Receiver, walEntry.Amount)
@@ -189,10 +188,9 @@ func(node *Node) handleAbortActions(reqKey string){
         log.Printf("[Node %d] UNDO COMPLETE: Receiver %s debited back %d",
             node.nodeId, walEntry.Receiver, walEntry.Amount)
 
-		node.muState.Lock()
 		node.releaseLock(walEntry.Receiver)
+
 		log.Printf("[Node %d] Released lock on datapoint (%s)",node.nodeId,walEntry.Receiver)
-		node.muState.Unlock()
 	}
 
 	if !success {
@@ -215,7 +213,8 @@ func (wal *WriteAheadLog) Close() error {
 }
 
 func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
-	log.Printf("[Node %d] Timer expired for 2PC protocol",node.nodeId)
+	log.Printf("[Node %d] Timer expired for 2PC protocol for req (%s, %s, %d)",
+	node.nodeId,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
 	node.muBallot.RLock()
     leaderId := node.promisedBallotAccept.NodeId

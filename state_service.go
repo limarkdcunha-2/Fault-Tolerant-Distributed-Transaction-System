@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	pb "transaction-processor/message"
 
 	"github.com/cockroachdb/pebble"
 )
@@ -25,7 +26,7 @@ type BankAccounts struct {
 }
 
 // Has to be called under muExec
-func (node *Node) processIntraShardTransaction(transaction Transaction) (bool, error) {
+func (node *Node) processIntraShardTransaction(transaction *pb.Transaction) (bool, error) {
     sender := transaction.Sender
     receiver := transaction.Receiver
     amount := transaction.Amount
@@ -312,10 +313,7 @@ func(node *Node) checkIfSufficientBalance(sender string, amount int32) (bool){
 }
 
 // Helper function
-func (node *Node) getBalance(accountName string) (int32, error) {
-    // node.muState.RLock()
-    // defer node.muState.RUnlock()
-    
+func (node *Node) getBalance(accountName string) (int32, error) {    
     data, closer, err := node.state.Get(accountKey(accountName))
     if err != nil {
         if err == pebble.ErrNotFound {

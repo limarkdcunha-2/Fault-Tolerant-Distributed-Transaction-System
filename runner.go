@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -351,32 +350,4 @@ func (r *Runner) PrintBalanceAll(datapoint string){
             log.Printf("[Runner] Failed to print log for node %d: %v",nodeId, err)
         }
     }
-}
-
-func (r *Runner) CleanupStateAndWAL() error {
-    dirs := []string{"state", "wal"}
-    
-    for _, dir := range dirs {
-        if _, err := os.Stat(dir); os.IsNotExist(err) {
-            log.Printf("Directory %s does not exist, skipping", dir)
-            continue
-        }
-        
-        entries, err := os.ReadDir(dir)
-        if err != nil {
-            return fmt.Errorf("failed to read directory %s: %w", dir, err)
-        }
-
-        for _, entry := range entries {
-            path := filepath.Join(dir, entry.Name())
-            if err := os.RemoveAll(path); err != nil {
-                return fmt.Errorf("failed to remove %s: %w", path, err)
-            }
-            log.Printf("Deleted: %s", path)
-        }
-        
-        log.Printf("Cleaned directory: %s", dir)
-    }
-    
-    return nil
 }

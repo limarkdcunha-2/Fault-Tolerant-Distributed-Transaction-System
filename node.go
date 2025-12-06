@@ -127,6 +127,7 @@ type Node struct {
 	promiseLog PromiseLog
 
 	// Project helpers
+	muLocks sync.RWMutex
 	muStatus sync.RWMutex
     status   NodeStatus
 
@@ -312,11 +313,7 @@ func (node *Node) hasPendingWork() bool {
     return pendingCount > 0 
 }
 
-func (node *Node) hasPendingWorkBatchedVersion(batchLen int) bool {
-	node.muPending.RLock()
-    pendingCount := len(node.pendingRequests)
-    node.muPending.RUnlock()
-
+func (node *Node) hasPendingWorkBatchedVersion(pendingCount int,batchLen int) bool {
 	return pendingCount > batchLen
 }
 

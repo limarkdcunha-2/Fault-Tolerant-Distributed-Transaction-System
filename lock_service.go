@@ -16,7 +16,7 @@ func (node *Node) getLockKey(datapoint string) []byte {
 	return []byte("lock:" + datapoint)
 }
 
-// needs to be called with muState held
+// needs to be called with muLocks held
 func (node *Node) isLocked(datapoint string) bool {
 	key := node.getLockKey(datapoint)
 	
@@ -33,7 +33,7 @@ func (node *Node) isLocked(datapoint string) bool {
 	return true
 }
 
-// needs to be called with muState held
+// needs to be called with muLocks held
 func (node *Node) acquireLock(datapoint string, reqKey string) error {
 	key := node.getLockKey(datapoint)
 	

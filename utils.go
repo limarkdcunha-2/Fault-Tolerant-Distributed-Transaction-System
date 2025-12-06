@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	pb "transaction-processor/message"
@@ -70,7 +72,7 @@ func (node *Node) updateLeaderIfNeededForCluster(sender string,leaderIdFromMsg i
     info,exists := node.clusterInfo[clusterId]
 
     if !exists {
-        log.Printf("[[Node %d] Cluster info not present=%d",node.nodeId)
+        log.Printf("[[Node %d] Cluster info not present=%d",node.nodeId,clusterId)
         return
 	}
 
@@ -312,4 +314,40 @@ func (node *Node) PrintAcceptLogUtil() {
     }
     
     fmt.Println("-------------------------------------------")
+}
+
+
+func CleanupPersistence() error {
+	dirs := []string{"logs", "state", "wal"}
+
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed to create missing dir %s: %v", dir, err)
+			}
+			continue
+		}
+
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Errorf("failed to read directory %s: %v", dir, err)
+		}
+
+		for _, entry := range entries {
+			fullPath := filepath.Join(dir, entry.Name())
+			
+			if err := os.RemoveAll(fullPath); err != nil {
+				return fmt.Errorf("failed to delete %s: %v", fullPath, err)
+			}
+		}
+		
+		log.Printf("Cleaned up contents of: %s/", dir)
+	}
+
+    if err := os.RemoveAll("runnerlog.log"); err != nil {
+        return fmt.Errorf("failed to delete runnerlog.log: %v", err)
+    }
+    log.Printf("Cleaned up file: runnerlog.log")
+
+	return nil
 }

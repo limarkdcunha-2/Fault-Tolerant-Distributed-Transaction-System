@@ -107,6 +107,8 @@ type Node struct {
 	lastExecSeqNo int32
 	// catchUpExecSeqNo int32
 
+	// State and locks metadata is stored in DB
+	muLocks sync.RWMutex
 	muState sync.RWMutex
     state   *pebble.DB
 
@@ -192,7 +194,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		pendingAckReplies:make(map[string]*pb.ReplyMessage),
 	}
 
-	randomTime := time.Duration(rand.Intn(100)+100) * time.Millisecond
+	randomTime := time.Duration(rand.Intn(100)+200) * time.Millisecond
 	newNode.livenessTimer = NewCustomTimer(randomTime,newNode.onLivenessTimerExpired)
 
 	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)
@@ -308,11 +310,7 @@ func (node *Node) hasPendingWork() bool {
     return pendingCount > 0 
 }
 
-func (node *Node) hasPendingWorkBatchedVersion(batchLen int) bool {
-	node.muPending.RLock()
-    pendingCount := len(node.pendingRequests)
-    node.muPending.RUnlock()
-
+func (node *Node) hasPendingWorkBatchedVersion(pendingCount int,batchLen int) bool {
 	return pendingCount > batchLen
 }
 

@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	pb "transaction-processor/message"
@@ -312,4 +314,40 @@ func (node *Node) PrintAcceptLogUtil() {
     }
     
     fmt.Println("-------------------------------------------")
+}
+
+
+func CleanupPersistence() error {
+	dirs := []string{"logs", "state", "wal"}
+
+	for _, dir := range dirs {
+		// 1. Check if the directory exists
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			// If it doesn't exist, create it (so it's ready for use)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return fmt.Errorf("failed to create missing dir %s: %v", dir, err)
+			}
+			continue
+		}
+
+		// 2. Read the directory contents
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Errorf("failed to read directory %s: %v", dir, err)
+		}
+
+		// 3. Delete each entry (files and subdirectories)
+		for _, entry := range entries {
+			fullPath := filepath.Join(dir, entry.Name())
+			
+			// RemoveAll handles both files and nested directories recursively
+			if err := os.RemoveAll(fullPath); err != nil {
+				return fmt.Errorf("failed to delete %s: %v", fullPath, err)
+			}
+		}
+		
+		log.Printf("Cleaned up contents of: %s/", dir)
+	}
+
+	return nil
 }

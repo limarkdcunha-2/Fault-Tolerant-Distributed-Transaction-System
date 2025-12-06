@@ -16,7 +16,7 @@ func (node *Node) getLockKey(datapoint string) []byte {
 	return []byte("lock:" + datapoint)
 }
 
-// needs to be called with muState held
+// needs to be called with muLocks held
 func (node *Node) isLocked(datapoint string) bool {
 	key := node.getLockKey(datapoint)
 	
@@ -33,7 +33,7 @@ func (node *Node) isLocked(datapoint string) bool {
 	return true
 }
 
-// needs to be called with muState held
+// needs to be called with muLocks held
 func (node *Node) acquireLock(datapoint string, reqKey string) error {
 	key := node.getLockKey(datapoint)
 	
@@ -45,7 +45,6 @@ func (node *Node) acquireLock(datapoint string, reqKey string) error {
 	return nil
 }
 
-// needs to be called with muState held
 func (node *Node) releaseLock(datapoint string) error {
 	key := node.getLockKey(datapoint)
 	
@@ -67,50 +66,4 @@ func keyUpperBound(b []byte) []byte {
 		}
 	}
 	return nil
-}
-
-func (node *Node) releaseAllLocks() {
-    node.muState.Lock()
-    defer node.muState.Unlock()
-
-    if node.state == nil {
-        return
-    }
-
-    prefix := []byte("lock:")
-    
-    iterOptions := &pebble.IterOptions{
-        LowerBound: prefix,
-        UpperBound: keyUpperBound(prefix),
-    }
-
-    iter, err := node.state.NewIter(iterOptions)
-    if err != nil {
-        log.Printf("[Node %d] Error creating iterator for releasing locks: %v", node.nodeId, err)
-        return
-    }
-    defer iter.Close()
-
-    // Use a Batch for atomic, efficient deletion
-    batch := node.state.NewBatch()
-    defer batch.Close()
-
-    count := 0
-    for iter.First(); iter.Valid(); iter.Next() {
-        key := make([]byte, len(iter.Key()))
-        copy(key, iter.Key())
-        
-        batch.Delete(key, pebble.NoSync)
-        count++
-    }
-
-    if count > 0 {
-        if err := batch.Commit(pebble.NoSync); err != nil {
-            log.Printf("[Node %d] Failed to commit batch release of locks: %v", node.nodeId, err)
-        } else {
-            log.Printf("[Node %d] Released all %d locks due to leadership change/timeout", node.nodeId, count)
-        }
-    } else {
-        log.Printf("[Node %d] No locks found to release.", node.nodeId)
-    }
 }

@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	pb "transaction-processor/message"
 
 	"github.com/cockroachdb/pebble"
 )
@@ -25,7 +26,7 @@ type BankAccounts struct {
 }
 
 // Has to be called under muExec
-func (node *Node) processIntraShardTransaction(transaction Transaction) (bool, error) {
+func (node *Node) processIntraShardTransaction(transaction *pb.Transaction) (bool, error) {
     sender := transaction.Sender
     receiver := transaction.Receiver
     amount := transaction.Amount

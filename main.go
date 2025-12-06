@@ -8,6 +8,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 
 	"log"
 	"net"
@@ -25,6 +26,7 @@ func main() {
 	serverMode := flag.Bool("s", false, "Run in server mode (spawn nodes)")
 	runnerMode := flag.Bool("r", false, "Run in runner mode (full simulation)")
 	testCasesGenMode := flag.Bool("t", false, "Run in to generate random test cases")
+	cleanupMode := flag.Bool("d", false, "Run in to generate random test cases")
 	
 	flag.Parse()
 
@@ -41,6 +43,8 @@ func main() {
 		runner.RunAllTestSets()
 	case *testCasesGenMode:
 		gen_test_cases()
+	case *cleanupMode:
+		CleanupPersistence()
 	default:
 		log.Println("Usage:")
 		log.Println("  go run . -s node <id> <servicePort> <controlPort>  (Run a single node)")
@@ -69,15 +73,15 @@ func spawnAllNodes() {
 
 func runNode(nodeID, port string) {
 	fmt.Printf("\n[Running] NodeID=%s Port =%s\n", nodeID, port)
-	// log.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
 
-	file, err := os.OpenFile(fmt.Sprintf("logs/node%s.log",nodeID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
+	// file, err := os.OpenFile(fmt.Sprintf("logs/node%s.log",nodeID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// defer file.Close()
 
-	log.SetOutput(file)
+	// log.SetOutput(file)
 
 	nodeIdInt,_ :=strconv.Atoi(nodeID)
 	portNumber,_ := strconv.Atoi(port)

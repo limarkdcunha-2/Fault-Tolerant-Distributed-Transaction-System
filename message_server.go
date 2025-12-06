@@ -1385,17 +1385,15 @@ func (node *Node) executeInOrder(isLeader bool) {
 				if isCrossShard {
 					if isSenderSideCrossShard {
 						// CROSS SHARD Coordinator flow
-						// TO DO move this out of here
-						// node.removePendingRequest(reply.ClientId,reply.ClientRequestTimestamp)
 						reqKey := makeRequestKey(reply.ClientId,reply.ClientRequestTimestamp)
 
 						toRemoveFromPending = append(toRemoveFromPending,reqKey)
 
 						if currentAcceptType != pb.AcceptType_COMMIT {
+							// TO DO if possible move this out from muExec
 							// Execution is being run in 1st round of consensus
 							// Adding to pending ACKs flow
 							node.muPendingAckReplies.Lock()
-							
 							node.pendingAckReplies[reqKey] = reply
 							node.muPendingAckReplies.Unlock()
 						} else {
@@ -1434,7 +1432,7 @@ func (node *Node) executeInOrder(isLeader bool) {
 		// When the request is executed, there are two cases:
 		// (a) There is no pending (received but not executed) request on the node: the timer stops (and it is initiated when the node receives the next request)
 		// (b) There are pending requests on the node: the timer resets
-		if node.hasPendingWorkBatchedVersion(pendingCount,len(repliesToCache)) {
+		if node.hasPendingWorkBatchedVersion(pendingCount,len(repliesToCache)+len(toRemoveFromPending)){
 			log.Printf("[Node %d] Pending work present restarting liveness timer",node.nodeId)
 			node.livenessTimer.Restart()
 		} else {

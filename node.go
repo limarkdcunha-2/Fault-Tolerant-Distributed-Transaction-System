@@ -20,6 +20,13 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+type AbortAction struct {
+	seqNum int32
+	reqKey string
+	sender string
+	receiver string
+}
+
 type NodeStatus int
 
 const (
@@ -75,7 +82,8 @@ type CrossShardTrans struct {
 	Ballot *pb.BallotNumber
 	Request *pb.ClientRequest
 	Timer *CustomTimer
-	isAckReceived bool
+	shouldKeepSendingAbort bool
+	shouldKeepSendingCommmit bool
 	isCommitOrAbortReceived bool
 }
 
@@ -150,6 +158,9 @@ type Node struct {
 	muPendingAckReplies sync.RWMutex
 	pendingAckReplies map[string]*pb.ReplyMessage
 
+	muTwoPcPreparedCache sync.RWMutex
+	twoPCPreparedCache map[string]*pb.TwoPCPreparedMessage
+
 	muAck sync.RWMutex
 	ackReplies map[string]*pb.TwoPCAckMessage
 
@@ -195,6 +206,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		crossSharTxs:make(map[string]*CrossShardTrans),
 		pendingAckReplies:make(map[string]*pb.ReplyMessage),
 		ackReplies:make(map[string]*pb.TwoPCAckMessage),
+		twoPCPreparedCache:make(map[string]*pb.TwoPCPreparedMessage),
 	}
 
 	randomTime := time.Duration(rand.Intn(100)+200) * time.Millisecond

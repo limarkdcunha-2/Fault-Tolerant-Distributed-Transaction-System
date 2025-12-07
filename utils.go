@@ -79,7 +79,8 @@ func (node *Node) updateLeaderIfNeededForCluster(sender string,leaderIdFromMsg i
     targetLeaderId := info.LeaderId
 
     if targetLeaderId != leaderIdFromMsg{
-        info.LeaderId = targetLeaderId
+        // log.Printf("[Node %d] Updating leaderId to %d from %d for cluster=%d",node.nodeId,targetLeaderId,info.LeaderId,clusterId)
+        info.LeaderId = leaderIdFromMsg
     }
 }
 
@@ -195,7 +196,7 @@ func(node *Node) findTargetLeaderId(datapoint string) (int32) {
     return targetLeaderId
 }
 
-func(node *Node) isAckReceived(req *pb.ClientRequest) bool {
+func(node *Node) shouldKeepSendingAbort(req *pb.ClientRequest) bool {
     node.muCrossSharTxs.RLock()
     defer node.muCrossSharTxs.RUnlock()  
 
@@ -207,7 +208,22 @@ func(node *Node) isAckReceived(req *pb.ClientRequest) bool {
         return false
     }
     
-    return tx.isAckReceived
+    return tx.shouldKeepSendingAbort
+}
+
+func(node *Node) shouldKeepSendingCommmit(req *pb.ClientRequest) bool {
+    node.muCrossSharTxs.RLock()
+    defer node.muCrossSharTxs.RUnlock()  
+
+    reqKey := makeRequestKey(req.ClientId,req.Timestamp)
+
+    tx,exists := node.crossSharTxs[reqKey]
+
+    if !exists {
+        return false
+    }
+    
+    return tx.shouldKeepSendingCommmit
 }
 
 func(node *Node) markAckReceived(req *pb.ClientRequest) {
@@ -216,7 +232,8 @@ func(node *Node) markAckReceived(req *pb.ClientRequest) {
 
     reqKey := makeRequestKey(req.ClientId,req.Timestamp)
 
-    node.crossSharTxs[reqKey].isAckReceived = true
+    node.crossSharTxs[reqKey].shouldKeepSendingAbort = false
+    node.crossSharTxs[reqKey].shouldKeepSendingCommmit = false
 }
 
 func (node *Node) Activate() {
@@ -283,6 +300,7 @@ func (node *Node) PrintAcceptLogUtil() {
         // Lock entry and read all fields we need
         entry.mu.Lock()
         phase := entry.Phase
+        twoPCPhase:= entry.TwoPCPhase
         sequenceNum := entry.SequenceNum
         ballotRound := entry.Ballot.RoundNumber
         ballotNodeId := entry.Ballot.NodeId
@@ -302,10 +320,20 @@ func (node *Node) PrintAcceptLogUtil() {
             status = "A"
 		}
 
+        twoPCStatus := "X"
+        switch twoPCPhase {
+        case PhaseExecuted:
+            twoPCStatus = "E"
+        case PhaseCommitted:
+            twoPCStatus = "C"
+        case PhaseAccepted:
+            twoPCStatus = "A"
+		}
+
         // Format and print based on request type
         if req != nil {
-			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | AcceptType=%s | Request status=%s | (%s, %s, %d)\n",
-				sequenceNum, ballotRound,ballotNodeId, entryStatus,acceptType,status,
+			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | AcceptType=%s | 1st R Status=%s | 2nd R Status=%s | (%s, %s, %d)\n",
+				sequenceNum, ballotRound,ballotNodeId, entryStatus,acceptType,status,twoPCStatus,
 				req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
         } else {
             fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | AcceptType=%s | Request status=%s | NO-OP\n",

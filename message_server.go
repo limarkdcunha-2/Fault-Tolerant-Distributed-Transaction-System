@@ -319,7 +319,8 @@ func(node *Node) initiateConsensusRound(req *pb.ClientRequest, acceptType pb.Acc
 			Ballot: node.promisedBallotAccept,
 			Request:req,
 			Timer: reqTimer,
-			isAckReceived: false,
+			shouldKeepSendingCommmit: true,
+			shouldKeepSendingAbort: true,
 			isCommitOrAbortReceived: false,
 		}
 		node.crossSharTxs[reqKey] = crossShardTrans
@@ -705,8 +706,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
         return &emptypb.Empty{}, nil
     }
 
-	log.Printf("[Node %d] [ACCEPTED] Received for  Seq=%d  | from Node %d | ballot round=%d",
-		node.nodeId,msg.SequenceNum,msg.NodeId, msg.Ballot.RoundNumber)
+	log.Printf("[Node %d] [ACCEPTED] Received(%s) for  Seq=%d  | from Node %d | ballot round=%d",
+		node.nodeId,msg.AcceptType,msg.SequenceNum,msg.NodeId, msg.Ballot.RoundNumber)
 
 	node.muLog.Lock()
 
@@ -714,7 +715,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	// 1. Retrieve the log entry for this sequence number (created during PrePrepare)
 	if !exists {
-		log.Printf("[Node %d] REJECTED ACCEPTED: No log entry for SeqNum %d.", node.nodeId, msg.SequenceNum)
+		log.Printf("[Node %d] REJECTED ACCEPTED(%s): No log entry for SeqNum %d.", node.nodeId, msg.AcceptType,msg.SequenceNum)
+
 		node.muLog.Unlock()
 		return &emptypb.Empty{}, nil
 	}
@@ -726,10 +728,10 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	// 2. Check if valid ballot number 
 	if !node.isBallotEqual(entry.Ballot,msg.Ballot) {
-		log.Printf("[Node %d] REJECTED ACCEPTED: Ballot mismatch for (R:%d, S:%d).",
-			node.nodeId, msg.Ballot.RoundNumber, msg.SequenceNum)
-		log.Printf("[Node %d] Entry ballot (R:%d,N:%d) msg ballot (R:%d,N:%d)",
-		node.nodeId,entry.Ballot.RoundNumber,entry.Ballot.NodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+		log.Printf("[Node %d] REJECTED ACCEPTED(%s) Ballot mismatch for (R:%d, S:%d).",
+			node.nodeId,msg.AcceptType, msg.Ballot.RoundNumber, msg.SequenceNum)
+		// log.Printf("[Node %d] Entry ballot (R:%d,N:%d) msg ballot (R:%d,N:%d)",
+		// node.nodeId,entry.Ballot.RoundNumber,entry.Ballot.NodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
 		
 		entry.mu.Unlock()
 		return &emptypb.Empty{}, nil
@@ -741,8 +743,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 	if entry.Phase >= PhaseCommitted {
 		// For intra shard transaction or cross shard prepare phase , ignore extra ACCEPTED messages
 		if entry.TwoPCPhase == PhaseNone ||  entry.TwoPCPhase >= PhaseCommitted {
-			log.Printf("[Node %d] Ignoring ACCEPTED for (R:%d, S:%d), already in Phase %v",
-				node.nodeId, entry.Ballot.RoundNumber, entry.SequenceNum, entry.Phase)
+			log.Printf("[Node %d] Ignoring ACCEPTED(%s) for (R:%d, S:%d), already in Phase %v",
+				node.nodeId,msg.AcceptType, entry.Ballot.RoundNumber, entry.SequenceNum, entry.Phase)
 			
 			entry.mu.Unlock()
        	 	return &emptypb.Empty{}, nil
@@ -925,10 +927,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 						Request: commitMsg.Request,
 						NodeId: node.nodeId,
 					}
-					log.Printf("[Node %d] Sending 2PC PREPARED(%s, %s, %d) for seq=%d",preparedMsg.NodeId,
-					preparedMsg.Request.Transaction.Sender,preparedMsg.Request.Transaction.Receiver,preparedMsg.Request.Transaction.Amount,commitMsg.SequenceNum)
 
-					go node.peers[targetLeaderId].HandleTwoPCPrepared(context.Background(),preparedMsg)
+					go node.sendTwoPCPrepared(preparedMsg)
 				} else if commitMsg.AcceptType == pb.AcceptType_ABORT{
 					abortMsg := &pb.TwoPCAbortMessage{
 						Request: commitMsg.Request,
@@ -950,6 +950,20 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	entry.mu.Unlock()
 	return &emptypb.Empty{}, nil
+}
+
+func(node *Node) sendTwoPCPrepared(preparedMsg *pb.TwoPCPreparedMessage){
+	targetLeaderId := node.findTargetLeaderId(preparedMsg.Request.Transaction.Sender)
+					
+	log.Printf("[Node %d] Sending 2PC PREPARED(%s, %s, %d) to node=%d",preparedMsg.NodeId,preparedMsg.Request.Transaction.Sender,
+	preparedMsg.Request.Transaction.Receiver,preparedMsg.Request.Transaction.Amount,targetLeaderId)
+
+	_ ,err := node.peers[targetLeaderId].HandleTwoPCPrepared(context.Background(),preparedMsg)
+
+	if err != nil {
+		log.Printf("[Node %d] Error sending 2PC PREPARED(%s, %s, %d) node=%d",preparedMsg.NodeId,preparedMsg.Request.Transaction.Sender,
+		preparedMsg.Request.Transaction.Receiver,preparedMsg.Request.Transaction.Amount,targetLeaderId)
+	}
 }
 
 func(node *Node) broadcastCommitMessage(msg *pb.CommitMessage){
@@ -1095,6 +1109,7 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 		clientId := entry.Request.ClientId
 		reqTimeStamp := entry.Request.Timestamp
 		entry.EntryAcceptType = msg.AcceptType
+		entry.TwoPCPhase = PhaseCommitted
 		entry.mu.Unlock()
 
 		isReceiverShard := datapointInShard(msg.Request.Transaction.Receiver,node.clusterId)
@@ -1170,7 +1185,6 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 				return &emptypb.Empty{}, nil
 			}
 
-			// Simply do nothing
 			entry.TwoPCPhase = PhaseCommitted
 			entry.EntryAcceptType = msg.AcceptType
 			clientId := entry.Request.ClientId
@@ -1684,7 +1698,6 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.muBallot.Lock()
 		// node.promisedBallotPrepare = msg.Ballot
 		node.promisedBallotAccept = msg.Ballot
-		// node.myBallot = msg.Ballot
 		node.muBallot.Unlock()
 
 		// 4c. Updated election state pointers
@@ -1694,7 +1707,10 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.muLeader.Unlock()
 
 		// 4d. Install new log unto self
-		node.installMergedAcceptLog(mergedLog,msg.Ballot,minSeq,maxSeq,true)
+		pendingAbortActions :=node.installMergedAcceptLog(mergedLog,msg.Ballot,minSeq,maxSeq,true)
+
+		// Note this is really critical
+		node.performNeededAbortsAndRepairLocks(pendingAbortActions)
 
 		// This exec wont work inside muLog
 		node.muExec.Lock()
@@ -1736,6 +1752,8 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.buildPendingRequestsQueue(highestCheckpointNo)
 		log.Printf("[Node %d] Building pending requests complete",node.nodeId)
 
+		node.buildCrossShardQueue(highestCheckpointNo)
+
 		// 4g. Start draining pending requests queue
 		node.drainQueuedRequests(msg.Ballot)
 		log.Printf("[Node %d] Draining queued requests complete (as leader)",node.nodeId)
@@ -1749,6 +1767,9 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 	node.muProLog.Unlock()
 	return &emptypb.Empty{},nil
 }
+
+// func(node *Node) drainCrossShardTxs(){
+// }
 
 // Lock for promise log has been held in parent
 func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32,int32) {
@@ -1784,7 +1805,8 @@ func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32,int32
             existing, exists := merged[seq]
 
 			// 2a Highest ballot wins
-            if !exists || node.isBallotGreaterThan(accepted.Ballot, existing.Ballot) {
+            if !exists || node.isBallotGreaterThan(accepted.Ballot, existing.Ballot)|| 
+			(node.isBallotEqual(accepted.Ballot, existing.Ballot) && accepted.AcceptType == pb.AcceptType_COMMIT && existing.AcceptType == pb.AcceptType_PREPARE)  {
                 merged[seq] = accepted
             }
         }
@@ -1823,7 +1845,9 @@ func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32,int32
     return mergedSlice,minS,maxSeq,maxCheckpointNodeId
 }
 
-func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winningBallot *pb.BallotNumber,minSeq int32,maxSeq int32,isLeader bool) {
+func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winningBallot *pb.BallotNumber,minSeq int32,maxSeq int32,isLeader bool) []AbortAction {
+	var pendingAbortActions []AbortAction
+
 	node.muLog.Lock()
 	
 	// 1. Installing merged log
@@ -1846,26 +1870,61 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 				AcceptType: acceptedMsg.AcceptType,
 			}
 
-			newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
-			newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
-
-            node.acceptLog[seq] = &LogEntry{
+            newEntry := &LogEntry{
                 SequenceNum: seq,
-                Ballot:      winningBallot,
-                Request:     acceptedMsg.Request,
-                Phase:       PhaseAccepted,
-				AcceptedMessages:newAcceptMsgLog,
-				AcceptCount:1,
+                Ballot: winningBallot,
+                Request: acceptedMsg.Request,
 				Status: LogEntryPresent,
 				EntryAcceptType: selfAcceptedMessage.AcceptType,
             }
+
+			if newEntry.EntryAcceptType == pb.AcceptType_COMMIT {
+				newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
+				newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
+
+				newEntry.Phase = PhaseCommitted
+				newEntry.TwoPCPhase = PhaseAccepted
+				newEntry.TwoPCAcceptedMessages = newAcceptMsgLog
+				newEntry.TwoPCAcceptCount = 1
+			} else{
+				newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
+				newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
+
+				newEntry.Phase = PhaseAccepted
+				newEntry.AcceptedMessages = newAcceptMsgLog
+				newEntry.AcceptCount = 1
+				newEntry.TwoPCPhase = PhaseNone
+			}
+
+			node.acceptLog[seq] = newEntry
         } else {
 			entry.mu.Lock()
 
 			if node.isBallotGreaterThan(winningBallot,entry.Ballot){
 				log.Printf("[Node %d] Updating ballot in seq=%d to (R:%d,N:%d)",node.nodeId,seq,winningBallot.RoundNumber,winningBallot.NodeId)
+				pastPhase := entry.Phase
+				pastAcceptType := entry.EntryAcceptType
+
 				entry.Ballot = winningBallot
 				entry.Request = acceptedMsg.Request
+				entry.EntryAcceptType = acceptedMsg.AcceptType
+
+				// REALLY IMPT FLOW
+				// If you have executed in PREPARE stage and somehow you see ABORT on that entry need to run handleabortactions as leader
+				if pastAcceptType == pb.AcceptType_PREPARE && acceptedMsg.AcceptType == pb.AcceptType_ABORT{
+
+					if pastPhase == PhaseExecuted {
+						reqKey := makeRequestKey(entry.Request.ClientId,entry.Request.Timestamp)
+						pendingAbortActions = append(pendingAbortActions, AbortAction{
+							seqNum: seq,
+							reqKey: reqKey,
+							sender: entry.Request.Transaction.Sender,
+							receiver: entry.Request.Transaction.Receiver,
+						})
+					}
+
+					entry.Phase = PhaseAccepted
+				}
 			}
 			
 			if isLeader {
@@ -1877,29 +1936,53 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 					AcceptType: acceptedMsg.AcceptType,
 				}
 
-				newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
-				newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
+				if acceptedMsg.AcceptType == pb.AcceptType_COMMIT {
+					newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
+					newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
 
-				entry.Phase = PhaseAccepted
-				entry.AcceptedMessages = newAcceptMsgLog
-				entry.AcceptCount = 1
+					entry.Phase = PhaseCommitted
+					entry.TwoPCPhase = PhaseAccepted
+					entry.TwoPCAcceptedMessages = newAcceptMsgLog
+					entry.TwoPCAcceptCount = 1
+				} else {
+					newAcceptMsgLog := make(map[int32] *pb.AcceptedMessage)
+					newAcceptMsgLog[node.nodeId] = selfAcceptedMessage
+
+					entry.Phase = PhaseAccepted
+					entry.AcceptedMessages = newAcceptMsgLog
+					entry.AcceptCount = 1
+					entry.TwoPCPhase = PhaseNone
+				}
 			} 
 			
 			entry.mu.Unlock()
 		}
 	}
 
-
 	//2. Clear any acceptLog entries beyond maxSeq to remove stale data
 	for _, entry := range node.acceptLog{
 		entry.mu.RLock()
 		seq := entry.SequenceNum
+		sender := entry.Request.Transaction.Sender
+		receiver := entry.Request.Transaction.Receiver
 		entry.mu.RUnlock()
 
 		log.Printf("[Node %d] Attempting delete at seq=%d",node.nodeId,seq)
+		
 		if seq > maxSeq {
-			log.Printf("[Node %d] Deleted at seq=%d",node.nodeId,seq)
+
+			if sender != "noop" {
+				isSenderShard := datapointInShard(sender,node.clusterId)
+
+				if isSenderShard {
+					node.releaseLock(sender)
+				} else {
+					node.releaseLock(receiver)
+				}
+			}
+			
 			delete(node.acceptLog, seq)
+			log.Printf("[Node %d] Deleted at seq=%d",node.nodeId,seq)
 		}
 	}
 	
@@ -1908,6 +1991,70 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 	node.muLog.Unlock()
 
 	log.Printf("[Node %d] installMergedAcceptLog complete: minSeq=%d maxSeq=%d, cleared entries beyond max", node.nodeId,minSeq, maxSeq)
+
+	return pendingAbortActions
+}
+
+func (node *Node) performNeededAbortsAndRepairLocks(pendingAbortActions []AbortAction) {
+	node.muLocks.Lock()
+    defer node.muLocks.Unlock()
+
+	if len(pendingAbortActions) > 0 {
+		log.Printf("[Node %d] Processing %d pending abort actions", 
+            node.nodeId, len(pendingAbortActions))
+
+		for _, action := range pendingAbortActions {
+			node.handleAbortActions(action.reqKey)
+		}
+	}
+
+	node.muLog.RLock()
+
+	for _, entry := range node.acceptLog {
+		entry.mu.RLock()
+        // phase := entry.Phase
+        acceptType := entry.EntryAcceptType
+        request := entry.Request
+        entry.mu.RUnlock()
+
+		if acceptType == pb.AcceptType_ABORT {
+            continue
+        }
+
+		reqKey := makeRequestKey(request.ClientId, request.Timestamp)
+
+		if isIntraShard(request) {
+			if !node.isLocked(request.Transaction.Sender) {
+				node.acquireLock(request.Transaction.Sender, reqKey)
+				log.Printf("[Node %d] Acquired lock on %s for reqKey=%s INTRA",
+					node.nodeId, request.Transaction.Sender, reqKey) 
+            }
+                
+			if !node.isLocked(request.Transaction.Receiver) {
+				node.acquireLock(request.Transaction.Receiver, reqKey)
+				log.Printf("[Node %d] Acquired lock on %s for reqKey=%s INTRA",
+					node.nodeId, request.Transaction.Receiver, reqKey)
+			}
+		} else {
+			isSenderShard := datapointInShard(request.Transaction.Sender, node.clusterId)
+
+			if isSenderShard {
+				if !node.isLocked(request.Transaction.Sender) {
+					node.acquireLock(request.Transaction.Sender, reqKey)
+					log.Printf("[Node %d] Acquired lock on sender %s for reqKey=%s SHARD",
+						node.nodeId, request.Transaction.Sender, reqKey)
+				}
+			} else {
+				if !node.isLocked(request.Transaction.Receiver) {
+					node.acquireLock(request.Transaction.Receiver, reqKey)
+					log.Printf("[Node %d] Acquired lock on receiver %s for reqKey=%s SHARD",
+						node.nodeId, request.Transaction.Receiver, reqKey)
+				}
+			}
+		}
+	}
+
+	node.muLog.RUnlock()
 }
 
 func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
@@ -2028,6 +2175,115 @@ func(node *Node) drainQueuedTwoPCPrepares(ballot *pb.BallotNumber){
     }
 }
 
+func(node *Node) buildCrossShardQueue(highestCheckpointSeq int32){
+	node.muLog.RLock()
+
+	logCopy := make(map[int32]*LogEntry, len(node.acceptLog))
+	for seq, entry := range node.acceptLog {
+		logCopy[seq] = entry
+	}
+
+	node.muLog.RUnlock()
+
+	crossShardTrans := make(map[string]*CrossShardTrans)
+
+	for _, entry := range logCopy {
+		entry.mu.RLock()
+
+		AcceptType := entry.EntryAcceptType
+		SequenceNum := entry.SequenceNum
+		ClientId := entry.Request.ClientId
+		Timestamp := entry.Request.Timestamp
+		Request := entry.Request
+		Ballot := entry.Ballot
+		Phase := entry.Phase
+		
+		entry.mu.RUnlock()
+
+		if SequenceNum <= highestCheckpointSeq{
+			continue
+		}
+
+		if Request == nil || isIntraShard(Request) {
+            continue
+        }
+
+		if Request.Transaction.Sender == "noop"{
+			continue
+		}
+
+		reqKey := makeRequestKey(ClientId, Timestamp)
+
+		// Finished = COMMIT/ABORT in 2nd round OR first-round ABORT that's committed
+		isFinished := (AcceptType == pb.AcceptType_COMMIT || 
+                      (AcceptType == pb.AcceptType_ABORT && Phase >= PhaseCommitted))
+
+		txData := &CrossShardTrans{
+            SequenceNum: SequenceNum,
+            Ballot: Ballot,
+            Request: Request,
+            Timer: NewCustomTimer(450 * time.Millisecond,func() {
+				node.on2PCTimerExpired(Request) 
+			}), 
+            shouldKeepSendingCommmit: true, 
+			shouldKeepSendingAbort: true,
+            isCommitOrAbortReceived: isFinished,
+        }
+
+		isSenderShard := datapointInShard(Request.Transaction.Sender,node.clusterId)
+
+		if isSenderShard {
+			if AcceptType == pb.AcceptType_PREPARE{
+				prepareMsg := &pb.TwoPCPrepareMessage{
+					Request: Request,
+					NodeId:  node.nodeId,
+				}
+
+				go node.sendTwoPCPrepare(prepareMsg)
+			}
+
+			if AcceptType == pb.AcceptType_ABORT{
+				abortMsg := &pb.TwoPCAbortMessage{
+					Request: Request,
+					NodeId:  node.nodeId,
+				}
+
+				go node.sendTwoPCAbortToParticipant(abortMsg)
+			}
+
+			if AcceptType == pb.AcceptType_COMMIT{
+				commitMsg := &pb.TwoPCCommitMessage{
+					Request: Request,
+					NodeId:  node.nodeId,
+				}
+
+				go node.sendTwoPCCommit(commitMsg)
+			}
+
+			if AcceptType == pb.AcceptType_PREPARE || AcceptType == pb.AcceptType_ABORT {
+				txData.Timer.Start()
+			}
+		}
+		
+        crossShardTrans[reqKey] = txData
+	}
+
+	node.muCrossSharTxs.Lock()
+    node.crossSharTxs = crossShardTrans
+    node.muCrossSharTxs.Unlock()
+
+	log.Printf("[Node %d] Rebuilt cross-shard queue: %d transactions (above checkpoint seq=%d)",
+        node.nodeId, len(crossShardTrans), highestCheckpointSeq)
+}
+
+// func(node *Node) doLocksRepairAfterNewView(highestCheckpointSeq int32){
+// 	node.muLog.RLock()
+
+// 	for seq := minSeq; seq <= maxSeq; seq++ {
+
+// 	}
+// }
+
 func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emptypb.Empty, error) {
 	if !node.isActive() {
 		log.Printf("[Node %d] Inactive. Dropping NEW-VIEW message for Ballot=(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
@@ -2091,7 +2347,9 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 	}
 
 	// 5. Install log
-	node.installMergedAcceptLog(msg.AcceptLog,msg.Ballot,msg.MinSeq,msg.MaxSeq,false)
+	pendingAbortActions:= node.installMergedAcceptLog(msg.AcceptLog,msg.Ballot,msg.MinSeq,msg.MaxSeq,false)
+
+	node.performNeededAbortsAndRepairLocks(pendingAbortActions)
 
 	// 6. Build pending queue from new log
 	node.buildPendingRequestsQueue(highestCheckpointSeq)
@@ -2115,6 +2373,26 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 
 	return &emptypb.Empty{},nil
 }
+
+// func (node *Node) reconcileLocksAfterRecovery() {
+// 	log.Printf("[Node %d] Starting lock reconciliation after recovery", node.nodeId)
+
+// 	node.muLog.RLock()
+
+// 	neededLocks := make(map[string]string)
+
+// 	for _, entry := range node.acceptLog {
+// 		entry.mu.RLock()
+//         phase := entry.Phase
+//         acceptType := entry.EntryAcceptType
+//         request := entry.Request
+//         entry.mu.RUnlock()
+
+// 		if phase == PhaseExecuted {
+//             continue
+//         }
+// 	}
+// }
 
 func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage,highestCheckpointSeq int32){
 	log.Printf("[Node %d] Sending ACCEPTED (entire ballot) back for ballot(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
@@ -2393,13 +2671,13 @@ func(node *Node) HandleTwoPCPrepare(ctx context.Context,msg *pb.TwoPCPrepareMess
         node.nodeId, msg.NodeId,msg.Request.ClientId, msg.Request.Timestamp.AsTime(),
         msg.Request.Transaction.Sender, msg.Request.Transaction.Receiver, msg.Request.Transaction.Amount)
 
+	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
+
 	node.muBallot.RLock()
 	ballot := node.promisedBallotAccept
 	leaderId := ballot.NodeId
 	// log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",node.nodeId,node.promisedBallotAccept.RoundNumber,node.promisedBallotAccept.NodeId)
 	node.muBallot.RUnlock()
-
-	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	// 1. Check if a leader exists
 	if leaderId == 0 {
@@ -2439,7 +2717,18 @@ func(node *Node) HandleTwoPCPrepare(ctx context.Context,msg *pb.TwoPCPrepareMess
 
 func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessage, leaderId int32){
 	reqKey := makeRequestKey(msg.Request.ClientId, msg.Request.Timestamp)
-	
+
+	// This will be needed in leader failure scenario for coorindator cluster
+	node.muTwoPcPreparedCache.RLock()
+	preparedMsg,exists := node.twoPCPreparedCache[reqKey]
+
+	if exists {
+		node.muTwoPcPreparedCache.RUnlock()
+
+		go node.sendTwoPCPrepared(preparedMsg,)
+		return
+	}
+	node.muTwoPcPreparedCache.RUnlock()
 
 	// 2. Check pending requests (assigned seq but not executed)
 	node.muPending.Lock()
@@ -2498,6 +2787,11 @@ func(node *Node) HandleTwoPCPrepared(ctx context.Context,msg *pb.TwoPCPreparedMe
 		log.Printf("[Node %d] Inactive. Dropping 2PC PREPARED message",node.nodeId)
         return &emptypb.Empty{}, nil
     }
+
+	log.Printf("[Node %d] Received 2PC PREPARED(%s, %s, %d) from node=%d", node.nodeId,
+		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,msg.NodeId)
+
+	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	node.muBallot.RLock()
 	leaderId := node.promisedBallotAccept.NodeId
@@ -2599,13 +2893,13 @@ func(node *Node) HandleTwoPCPrepared(ctx context.Context,msg *pb.TwoPCPreparedMe
 func(node *Node) sendTwoPCCommit(msg *pb.TwoPCCommitMessage){
 	targetLeaderId := node.findTargetLeaderId(msg.Request.Transaction.Receiver)
 
-
 	for {
-		if node.isAckReceived(msg.Request){
+		if !node.shouldKeepSendingCommmit(msg.Request){
 			break
 		}
 
-		log.Printf("[Node %d] Sending 2PC COMMIT to node=%d",node.nodeId,targetLeaderId)
+		log.Printf("[Node %d] Sending 2PC COMMIT(%s, %s, %d) to node=%d",node.nodeId,
+		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
 
 		_, err := node.peers[targetLeaderId].HandleTwoPCCommit(context.Background(),msg)
 		if err != nil {
@@ -2625,6 +2919,8 @@ func(node *Node) HandleTwoPCCommit(ctx context.Context, msg *pb.TwoPCCommitMessa
 
 	log.Printf("[Node %d] Received 2PC COMMIT(%s, %s, %d) from node=%d",node.nodeId,
 	msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,msg.NodeId)
+
+	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	node.muBallot.RLock()
 	leaderId := node.promisedBallotAccept.NodeId
@@ -2648,6 +2944,7 @@ func(node *Node) HandleTwoPCCommit(ctx context.Context, msg *pb.TwoPCCommitMessa
 	node.muAck.RUnlock()
 
 	if exists {
+		// log.Prin
 		go node.sendAckMessageToCoordinator(ackMsg)
 		return &emptypb.Empty{}, nil
 	}
@@ -2677,8 +2974,6 @@ func(node *Node) HandleTwoPCCommit(ctx context.Context, msg *pb.TwoPCCommitMessa
 
 	txData.isCommitOrAbortReceived = true
 	node.muCrossSharTxs.Unlock()
-
-	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	node.muLog.Lock()
 	existingEntry, exists := node.acceptLog[seq];
@@ -2735,6 +3030,8 @@ func (node *Node) HandleTwoPCAbortAsCoordinator(ctx context.Context, msg *pb.Two
 
 	log.Printf("[Node %d] Received ABORT from node=%d",node.nodeId,msg.NodeId)
 
+	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
+
 	// 1. Route abort to primary of cluster
 	node.muBallot.RLock()
     leaderId := node.promisedBallotAccept.NodeId
@@ -2766,8 +3063,6 @@ func (node *Node) HandleTwoPCAbortAsCoordinator(ctx context.Context, msg *pb.Two
         log.Printf("[Node %d] Stopped 2PC timer for seq=%d", node.nodeId, seq)
     }
     node.muCrossSharTxs.Unlock()
-
-	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	// 3. Check for already aborted message if PREPARE then go ahead with ABORT
 	node.muLog.Lock()
@@ -2846,6 +3141,8 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 
 	log.Printf("[Node %d] Received 2PC ABORT(%s, %s, %d) for req as Participant from node=%d",node.nodeId,
 	msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,msg.NodeId)
+
+	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	// 1. Route abort to primary of cluster
 	node.muBallot.RLock()
@@ -2966,6 +3263,8 @@ func(node *Node) HandleTwoPCAck(ctx context.Context, msg *pb.TwoPCAckMessage) (*
 	log.Printf("[Node %d] Received ACK(%s) for req (%s, %s, %d) message from node=%d",node.nodeId,msg.AckType,
 	msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,msg.NodeId)
 
+	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
+
 	node.muBallot.RLock()
 	leaderId := node.promisedBallotAccept.NodeId
 	node.muBallot.RUnlock()
@@ -2983,8 +3282,6 @@ func(node *Node) HandleTwoPCAck(ctx context.Context, msg *pb.TwoPCAckMessage) (*
 	
 	// Mark as received to stop sending of 2PC COMMIT/ABORT
 	node.markAckReceived(msg.Request)
-
-	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	return &emptypb.Empty{},nil
 }

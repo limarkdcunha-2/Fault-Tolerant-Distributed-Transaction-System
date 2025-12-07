@@ -141,7 +141,6 @@ func(wal *WriteAheadLog) getFromLog(reqId string) *WALEntry {
 }
 
 
-
 func(node *Node) handleAbortActions(reqKey string){
 	log.Printf("[Node %d] Handling ABORT actions for request %s", node.nodeId, reqKey)
 
@@ -235,12 +234,14 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
         return
     }
     seq := tx.SequenceNum
+	if tx.shouldKeepSendingCommmit {
+		tx.shouldKeepSendingCommmit = false
+	}
     node.muCrossSharTxs.Unlock()
 
 	node.muLog.Lock()
     entry, exists := node.acceptLog[seq]
    
-
 	if !exists {
 		node.muLog.Unlock()
         log.Printf("[Node %d] No log entry for seq=%d during timeout", node.nodeId, seq)
@@ -318,15 +319,17 @@ func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
 	targetLeaderId := node.findTargetLeaderId(msg.Request.Transaction.Receiver)
 
 	for {
-		if node.isAckReceived(msg.Request){
+		if !node.shouldKeepSendingAbort(msg.Request){
 			break
 		}
 
-		log.Printf("[Node %d] Sending 2PC ABORT to node=%d",node.nodeId,targetLeaderId)
+		log.Printf("[Node %d] Sending 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
+		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
 		
 		_, err := node.peers[targetLeaderId].HandleTwoPCAbortAsParticipant(context.Background(),msg)
 		if err != nil {
-			log.Printf("[Node %d] Failed to 2PC ABORT to node=%d",node.nodeId,targetLeaderId)
+			log.Printf("[Node %d] Failed to 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
+			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
 		}
 		
 		time.Sleep(10*time.Millisecond)

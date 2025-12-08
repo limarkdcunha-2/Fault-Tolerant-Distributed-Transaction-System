@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -14,13 +15,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"time"
 	pb "transaction-processor/message"
 
+	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// TO DO need to make this dynamic
-func getNodeCluster() []NodeConfig {
+func (node *Node) getNodeCluster() []NodeConfig {
+    node.muConfig.RLock()
+    defer node.muConfig.RUnlock()
+
+    if len(node.nodeConfigsMap) > 0 {
+        return node.nodeConfigsMap
+    }
+
+    // FALLBACK
 	return []NodeConfig{
 		{NodeId: 1, ClusterId: 1, PortNo: 8001},
         {NodeId: 2, ClusterId: 1, PortNo: 8002},
@@ -34,18 +44,41 @@ func getNodeCluster() []NodeConfig {
 	}
 }
 
-// TO DO need to make this dynamic
-func getClusterId(id int32) int32 {
-    if id >= 1 && id <= 3000 {
-        return 1
-    } else if id >= 3001 && id <= 6000 {
-        return 2
-    } else if id >= 6001 && id <= 9000 {
-        return 3
+func (node *Node) getClusterId(id int32) int32 {
+    node.muConfig.RLock()
+    totalDataPoints := node.totalDataPoints
+    numClusters := node.numClusters
+    node.muConfig.RUnlock()
+    
+    if id < 1 || id > totalDataPoints {
+        return -1
     }
     
-    // If data point is not within this limit then error should be thrown
-    return -1
+    itemsPerShard := totalDataPoints / numClusters
+    clusterId := ((id - 1) / itemsPerShard) + 1
+    
+    if clusterId > numClusters {
+        clusterId = numClusters
+    }
+    
+    return clusterId
+}
+
+func (node *Node) getShardRange(clusterId int32) (int32, int32) {
+    node.muConfig.RLock()
+    totalDataPoints := node.totalDataPoints
+    numClusters := node.numClusters
+    node.muConfig.RUnlock()
+    
+    itemsPerShard := totalDataPoints / numClusters
+    startId := (clusterId-1)*itemsPerShard + 1
+    endId := clusterId * itemsPerShard
+    
+    if clusterId == numClusters {
+        endId = totalDataPoints
+    }
+    
+    return startId, endId
 }
 
 func (node *Node) getAllClusterNodes() []int32 {
@@ -64,7 +97,7 @@ func (node *Node) updateLeaderIfNeededForCluster(sender string,leaderIdFromMsg i
         return
     }
 
-    clusterId := getClusterId(int32(senderIntVal))
+    clusterId := node.getClusterId(int32(senderIntVal))
 
     node.muCluster.Lock()
     defer node.muCluster.Unlock()
@@ -161,7 +194,7 @@ func (node *Node) isBallotLessThan(b1, b2 *pb.BallotNumber) bool {
     return false
 }
 
-func isIntraShard(req *pb.ClientRequest) bool {
+func(node *Node) isIntraShard(req *pb.ClientRequest) bool {
     if req == nil || req.Transaction == nil {
         return false
     }
@@ -169,16 +202,16 @@ func isIntraShard(req *pb.ClientRequest) bool {
     senderInt, _ := strconv.ParseInt(req.Transaction.Sender, 10, 0)
     receiverInt, _ := strconv.ParseInt(req.Transaction.Receiver, 10, 0)
 
-    senderCluster := getClusterId(int32(senderInt))
-    receiverCluster := getClusterId(int32(receiverInt))
+    senderCluster := node.getClusterId(int32(senderInt))
+    receiverCluster := node.getClusterId(int32(receiverInt))
     
     return senderCluster == receiverCluster
 }
 
-func datapointInShard(datapoint string,clusterId int32) bool{
+func(node *Node) datapointInShard(datapoint string,clusterId int32) bool{
     datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
     
-    targetClusterId := getClusterId(int32(datapointInt))
+    targetClusterId := node.getClusterId(int32(datapointInt))
 
     return targetClusterId == clusterId
 }
@@ -186,7 +219,7 @@ func datapointInShard(datapoint string,clusterId int32) bool{
 func(node *Node) findTargetLeaderId(datapoint string) (int32) {
     datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
     
-    targetClusterId := getClusterId(int32(datapointInt))
+    targetClusterId := node.getClusterId(int32(datapointInt))
     // log.Printf("[Node %d] target cluster Id=%d",node.nodeId,targetClusterId)
 
     node.muCluster.RLock()
@@ -378,4 +411,29 @@ func CleanupPersistence() error {
     log.Printf("Cleaned up file: runnerlog.log")
 
 	return nil
+}
+
+
+func (node *Node) Shutdown(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
+    log.Printf("[Node %d] Received shutdown command", node.nodeId)
+    
+    node.muState.Lock()
+    if node.state != nil {
+        node.state.Close()
+        node.state = nil
+    }
+    node.muState.Unlock()
+    
+    if node.wal != nil {
+        node.wal.Close()
+    }
+    
+    // Signal shutdown
+    go func() {
+        time.Sleep(100 * time.Millisecond)
+        close(node.shutdownChan)
+        os.Exit(0)
+    }()
+    
+    return &emptypb.Empty{}, nil
 }

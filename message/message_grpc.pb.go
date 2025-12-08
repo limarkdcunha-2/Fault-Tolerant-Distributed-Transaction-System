@@ -16,6 +16,7 @@ package message
 
 import (
 	context "context"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -44,6 +45,8 @@ const (
 	MessageService_HandleTwoPCAbortAsParticipant_FullMethodName = "/message.MessageService/HandleTwoPCAbortAsParticipant"
 	MessageService_HandleTwoPCCommit_FullMethodName             = "/message.MessageService/HandleTwoPCCommit"
 	MessageService_HandleTwoPCAck_FullMethodName                = "/message.MessageService/HandleTwoPCAck"
+	MessageService_ConfigureCluster_FullMethodName              = "/message.MessageService/ConfigureCluster"
+	MessageService_Shutdown_FullMethodName                      = "/message.MessageService/Shutdown"
 	MessageService_PrintAcceptLog_FullMethodName                = "/message.MessageService/PrintAcceptLog"
 	MessageService_FailNode_FullMethodName                      = "/message.MessageService/FailNode"
 	MessageService_RecoverNode_FullMethodName                   = "/message.MessageService/RecoverNode"
@@ -71,6 +74,8 @@ type MessageServiceClient interface {
 	HandleTwoPCCommit(ctx context.Context, in *TwoPCCommitMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	HandleTwoPCAck(ctx context.Context, in *TwoPCAckMessage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// Project helpers
+	ConfigureCluster(ctx context.Context, in *ConfigureClusterRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	Shutdown(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	FailNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RecoverNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -245,6 +250,26 @@ func (c *messageServiceClient) HandleTwoPCAck(ctx context.Context, in *TwoPCAckM
 	return out, nil
 }
 
+func (c *messageServiceClient) ConfigureCluster(ctx context.Context, in *ConfigureClusterRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_ConfigureCluster_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) Shutdown(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_Shutdown_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *messageServiceClient) PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -306,6 +331,8 @@ type MessageServiceServer interface {
 	HandleTwoPCCommit(context.Context, *TwoPCCommitMessage) (*emptypb.Empty, error)
 	HandleTwoPCAck(context.Context, *TwoPCAckMessage) (*emptypb.Empty, error)
 	// Project helpers
+	ConfigureCluster(context.Context, *ConfigureClusterRequest) (*emptypb.Empty, error)
+	Shutdown(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	FailNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	RecoverNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
@@ -367,6 +394,12 @@ func (UnimplementedMessageServiceServer) HandleTwoPCCommit(context.Context, *Two
 }
 func (UnimplementedMessageServiceServer) HandleTwoPCAck(context.Context, *TwoPCAckMessage) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleTwoPCAck not implemented")
+}
+func (UnimplementedMessageServiceServer) ConfigureCluster(context.Context, *ConfigureClusterRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ConfigureCluster not implemented")
+}
+func (UnimplementedMessageServiceServer) Shutdown(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Shutdown not implemented")
 }
 func (UnimplementedMessageServiceServer) PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintAcceptLog not implemented")
@@ -689,6 +722,42 @@ func _MessageService_HandleTwoPCAck_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_ConfigureCluster_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConfigureClusterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).ConfigureCluster(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_ConfigureCluster_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).ConfigureCluster(ctx, req.(*ConfigureClusterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_Shutdown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).Shutdown(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_Shutdown_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).Shutdown(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _MessageService_PrintAcceptLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -831,6 +900,14 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HandleTwoPCAck",
 			Handler:    _MessageService_HandleTwoPCAck_Handler,
+		},
+		{
+			MethodName: "ConfigureCluster",
+			Handler:    _MessageService_ConfigureCluster_Handler,
+		},
+		{
+			MethodName: "Shutdown",
+			Handler:    _MessageService_Shutdown_Handler,
 		},
 		{
 			MethodName: "PrintAcceptLog",

@@ -43,6 +43,12 @@ type Client struct {
 	muCluster sync.RWMutex
 	clusterInfo map[int32]*ClusterInfo
 
+	muConfig sync.RWMutex
+    numClusters int32
+    nodesPerCluster int32
+    nodeConfigsMap []NodeConfig
+	totalDataPoints int32
+
 	// for graceful shutdown
 	// muStop   sync.RWMutex
     // stopChan chan struct{}
@@ -61,9 +67,44 @@ func NewClient(port int) (*Client, error) {
 		// replyTracker: NewReplyTracker(),
 	}
 
-	client.buildClientClusterMap()
 
 	return client, nil
+}
+
+func (client *Client) SetClusterConfig(numClusters, nodesPerCluster, totalDataPoints int32, configs []NodeConfig) {
+    client.muConfig.Lock()
+    
+	log.Printf("[Client] Setting cluster config")
+    client.numClusters = numClusters
+    client.nodesPerCluster = nodesPerCluster
+    client.nodeConfigsMap = configs
+	client.totalDataPoints = totalDataPoints
+
+	client.muConfig.Unlock()
+    
+    client.buildClientClusterMap()
+}
+
+
+
+func (client *Client) getClusterId(id int32) int32 {
+	client.muConfig.RLock()
+	totalDataPoints := client.totalDataPoints
+    numClusters := client.numClusters
+    client.muConfig.RUnlock()
+
+	if id < 1 || id > totalDataPoints {
+        return -1
+    }
+    
+    itemsPerShard := totalDataPoints / numClusters
+    clusterId := ((id - 1) / itemsPerShard) + 1
+    
+    if clusterId > numClusters {
+        clusterId = numClusters
+    }
+    
+    return clusterId
 }
 
 func (client *Client) startGrpcServer() error {
@@ -84,25 +125,30 @@ func (client *Client) startGrpcServer() error {
 	return nil
 }
 
-func(client *Client) buildClientClusterMap(){
-	client.muCluster.Lock()
+func (client *Client) buildClientClusterMap() {
+    client.muCluster.Lock()
     defer client.muCluster.Unlock()
-
-	for _, nodeConfig := range getNodeCluster() {
-		info, exists := client.clusterInfo[nodeConfig.ClusterId]
-
-		if !exists {
-			info = &ClusterInfo{
+    
+    client.muConfig.RLock()
+    configs := client.nodeConfigsMap
+    nodesPerCluster := client.nodesPerCluster
+    client.muConfig.RUnlock()
+    
+    client.clusterInfo = make(map[int32]*ClusterInfo)
+    
+    for _, nodeConfig := range configs {
+        info, exists := client.clusterInfo[nodeConfig.ClusterId]
+        if !exists {
+            firstNodeId := (nodeConfig.ClusterId-1)*nodesPerCluster + 1
+            info = &ClusterInfo{
                 ClusterId: nodeConfig.ClusterId,
                 NodeIds:   []int32{},
-                LeaderId:  1 + 3 * (nodeConfig.ClusterId-1),
+                LeaderId:  firstNodeId,
             }
-
-			client.clusterInfo[nodeConfig.ClusterId] = info
-		}
-
-		info.NodeIds = append(info.NodeIds, nodeConfig.NodeId)
-	} 
+            client.clusterInfo[nodeConfig.ClusterId] = info
+        }
+        info.NodeIds = append(info.NodeIds, nodeConfig.NodeId)
+    }
 }
 
 
@@ -145,7 +191,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			break
 		}
 
-		clusterId := getClusterId(int32(senderIntVal))
+		clusterId := client.getClusterId(int32(senderIntVal))
 		log.Printf("[Client] Sending transaction to cluster=%d",clusterId)
 
 		info,exists := client.clusterInfo[clusterId]
@@ -212,7 +258,7 @@ func (client *Client) updateLeaderFromReply(response *pb.ReplyMessage) {
 
 	leaderIdFromResp := response.Ballot.NodeId
 
-	clusterId := getClusterId(response.ClientId)
+	clusterId := client.getClusterId(response.ClientId)
 	log.Printf("[Client] Checking leader update for cluster=%d for clientId=%d",clusterId,response.ClientId)
 	existingLeaderId := client.clusterInfo[clusterId].LeaderId
 	
@@ -317,6 +363,10 @@ func (client *Client) cleanupRequest(reqKey string) {
 }
 
 func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *grpc.ClientConn) {
+	client.muConfig.RLock()
+	configs := client.nodeConfigsMap
+	client.muConfig.RUnlock()
+
 	client.muConn.Lock()
 	defer client.muConn.Unlock()
 
@@ -325,7 +375,7 @@ func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *gr
 	}
 
 	var targetNode *NodeConfig
-	for _, config := range getNodeCluster() {
+	for _, config := range configs {
 		if config.NodeId == nodeId {
 			targetNode = &config
 			break

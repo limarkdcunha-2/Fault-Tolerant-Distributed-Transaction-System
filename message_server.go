@@ -65,7 +65,7 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 		return &emptypb.Empty{}, nil
 	}
 
-	if isIntraShard(req){
+	if node.isIntraShard(req){
 		// log.Printf("[Node %d] INTRA SHARD flow",node.nodeId)
 
 		node.handleIntraShardRequest(req,leaderId)
@@ -307,7 +307,7 @@ func(node *Node) initiateConsensusRound(req *pb.ClientRequest, acceptType pb.Acc
 		})
 
 		// Only COORDINATOR leader node should start the timer
-		if  datapointInShard(req.Transaction.Sender,node.clusterId) {
+		if  node.datapointInShard(req.Transaction.Sender,node.clusterId) {
 			log.Printf("[Node %d] Starting transaction timer for seq=%d",node.nodeId,seq)
 			if !reqTimer.IsRunning() {
 				reqTimer.Start()
@@ -610,7 +610,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 	node.acceptLog[msg.SequenceNum] = newEntry
 	node.muLog.Unlock()
 
-	isIntraShard := isIntraShard(msg.Request)
+	isIntraShard := node.isIntraShard(msg.Request)
 	reqKey := makeRequestKey(msg.Request.ClientId,msg.Request.Timestamp)
 
 	// 6. Acquire Locks
@@ -632,7 +632,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 			node.acquireLock(msg.Request.Transaction.Receiver,reqKey)
 		}
 	} else {
-		isSenderShard := datapointInShard(msg.Request.Transaction.Sender,node.clusterId)
+		isSenderShard := node.datapointInShard(msg.Request.Transaction.Sender,node.clusterId)
 
 		if isSenderShard {
 			if node.isLocked(msg.Request.Transaction.Sender) {
@@ -781,7 +781,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 				go node.broadcastCommitMessage(commitMsg)
 
 				if msg.AcceptType == pb.AcceptType_COMMIT {
-					isReceiverShard := datapointInShard(commitMsg.Request.Transaction.Receiver,node.clusterId)
+					isReceiverShard := node.datapointInShard(commitMsg.Request.Transaction.Receiver,node.clusterId)
 
 					// Pariticipatinng cluster logic
 					if isReceiverShard {
@@ -852,7 +852,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 						}
 					}
 				} else if msg.AcceptType == pb.AcceptType_ABORT {
-					isReceiverShard := datapointInShard(commitMsg.Request.Transaction.Receiver,node.clusterId)
+					isReceiverShard := node.datapointInShard(commitMsg.Request.Transaction.Receiver,node.clusterId)
 					// Locks release will be talen care of handleAbort function
 					// The job of this ABORT is simply to replicate
 					if isReceiverShard {
@@ -913,8 +913,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 		go node.broadcastCommitMessage(commitMsg)
 
-		isCrossShard := !isIntraShard(entry.Request)
-		isReceiverShard := datapointInShard(entry.Request.Transaction.Receiver,node.clusterId)
+		isCrossShard := !node.isIntraShard(entry.Request)
+		isReceiverShard := node.datapointInShard(entry.Request.Transaction.Receiver,node.clusterId)
 
 		// Send back either PREPARED or ABORT as leader of participant cluster to leader to coorindator cluster
 		if isCrossShard  {
@@ -1112,7 +1112,7 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 		entry.TwoPCPhase = PhaseCommitted
 		entry.mu.Unlock()
 
-		isReceiverShard := datapointInShard(msg.Request.Transaction.Receiver,node.clusterId)
+		isReceiverShard := node.datapointInShard(msg.Request.Transaction.Receiver,node.clusterId)
 
 		// Release the locks
 		if isReceiverShard {
@@ -1288,8 +1288,8 @@ func (node *Node) executeInOrder(isLeader bool) {
 		} else {
 			_, exists = node.GetCachedReply(currentRequest.ClientId, currentRequest.Timestamp)
 
-			isCrossShard := !isIntraShard(currentRequest)
-			isSenderSideCrossShard := datapointInShard(currentRequest.Transaction.Sender,node.clusterId)
+			isCrossShard := !node.isIntraShard(currentRequest)
+			isSenderSideCrossShard := node.datapointInShard(currentRequest.Transaction.Sender,node.clusterId)
 
 			// Non executed new request
 			if !exists {	
@@ -1972,7 +1972,7 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 		if seq > maxSeq {
 
 			if sender != "noop" {
-				isSenderShard := datapointInShard(sender,node.clusterId)
+				isSenderShard := node.datapointInShard(sender,node.clusterId)
 
 				if isSenderShard {
 					node.releaseLock(sender)
@@ -2023,7 +2023,7 @@ func (node *Node) performNeededAbortsAndRepairLocks(pendingAbortActions []AbortA
 
 		reqKey := makeRequestKey(request.ClientId, request.Timestamp)
 
-		if isIntraShard(request) {
+		if node.isIntraShard(request) {
 			if !node.isLocked(request.Transaction.Sender) {
 				node.acquireLock(request.Transaction.Sender, reqKey)
 				log.Printf("[Node %d] Acquired lock on %s for reqKey=%s INTRA",
@@ -2036,7 +2036,7 @@ func (node *Node) performNeededAbortsAndRepairLocks(pendingAbortActions []AbortA
 					node.nodeId, request.Transaction.Receiver, reqKey)
 			}
 		} else {
-			isSenderShard := datapointInShard(request.Transaction.Sender, node.clusterId)
+			isSenderShard := node.datapointInShard(request.Transaction.Sender, node.clusterId)
 
 			if isSenderShard {
 				if !node.isLocked(request.Transaction.Sender) {
@@ -2150,7 +2150,7 @@ func(node *Node) drainQueuedRequests(ballot *pb.BallotNumber){
 	log.Printf("[Node %d] Draining %d queued client requests", node.nodeId, len(queued))
 
     for _, req := range queued {
-		if isIntraShard(req) {
+		if node.isIntraShard(req) {
 			go node.handleIntraShardRequest(req, ballot.NodeId)
 		} else {
 			go node.handleCrossShardRequest(req,ballot)
@@ -2204,7 +2204,7 @@ func(node *Node) buildCrossShardQueue(highestCheckpointSeq int32){
 			continue
 		}
 
-		if Request == nil || isIntraShard(Request) {
+		if Request == nil || node.isIntraShard(Request) {
             continue
         }
 
@@ -2230,7 +2230,7 @@ func(node *Node) buildCrossShardQueue(highestCheckpointSeq int32){
             isCommitOrAbortReceived: isFinished,
         }
 
-		isSenderShard := datapointInShard(Request.Transaction.Sender,node.clusterId)
+		isSenderShard := node.datapointInShard(Request.Transaction.Sender,node.clusterId)
 
 		if isSenderShard {
 			if AcceptType == pb.AcceptType_PREPARE{
@@ -3315,4 +3315,49 @@ func(node *Node) RecoverNode(ctx context.Context, req *emptypb.Empty) (*emptypb.
 	node.Activate()
 
 	return &emptypb.Empty{},nil
+}
+
+
+func (node *Node) ConfigureCluster(ctx context.Context, req *pb.ConfigureClusterRequest) (*emptypb.Empty, error) {
+	node.muConfig.Lock()
+    node.numClusters = req.NumOfClusters
+    node.nodesPerCluster = req.NodesPerCluster
+    node.totalDataPoints = req.TotalDataPoints
+
+	node.nodeConfigsMap = make([]NodeConfig, len(req.NodeConfigs))
+
+	for i, cfg := range req.NodeConfigs {
+        node.nodeConfigsMap[i] = NodeConfig{
+            NodeId:    cfg.NodeId,
+            ClusterId: cfg.ClusterId,
+            PortNo:    cfg.Port,
+        }
+    }
+
+	node.muConfig.Unlock()
+
+	node.muCluster.Lock()
+    node.clusterId = node.getMyClusterId()
+    node.muCluster.Unlock()
+
+	node.buildClusterMap()
+
+	node.buildPeerGrpcConnections()
+
+	lenNodes := len(node.getAllClusterNodes())
+    node.N = int32(lenNodes)
+    node.f = (node.N - 1) / 2
+
+	startId, endId := node.getShardRange(node.clusterId)
+    shardSize := endId - startId + 1
+
+	if err := node.loadState(node.clusterId, shardSize); err != nil {
+        log.Printf("[Node %d] Failed to load state: %v", node.nodeId, err)
+        return &emptypb.Empty{}, err
+    }
+    
+    log.Printf("[Node %d] Configuration complete: Cluster %d, Shard [%d-%d], f=%d",
+        node.nodeId, node.clusterId, startId, endId, node.f)
+    
+    return &emptypb.Empty{}, nil
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,33 +25,34 @@ import (
 )
 
 type Runner struct {
-	nodeConfigs  []NodeConfig
-	testCases    map[int]TestCase
-	nodeClients  map[int32]pb.MessageServiceClient
+	testCases map[int]TestCase
+
+	nodeClients map[int32]pb.MessageServiceClient
 	client *Client
+
+    muConfig          sync.RWMutex
+    currentConfig     *ClusterConfiguration
+    nodeProcesses     []*exec.Cmd
 }
 
 type TransactionBatch struct {
-	transactions    []TestTransaction
-	isControl    bool
+	transactions []TestTransaction
+	isControl bool
+}
+
+type ClusterConfiguration struct {
+    NumClusters     int32
+    NodesPerCluster int32
+    TotalDataItems  int32
+    BasePort        int32
+    NodeConfigs     []NodeConfig
 }
 
 func NewRunner() *Runner {
 	runner:= &Runner{
-        nodeConfigs: getNodeCluster(),
         nodeClients: make(map[int32]pb.MessageServiceClient),
-        // localClients: make(map[string]*Client),
+        nodeProcesses:  make([]*exec.Cmd, 0),
 	}
-
-    for _, nodeConfig := range runner.nodeConfigs {
-        conn, err := grpc.NewClient(fmt.Sprintf(":%d", nodeConfig.PortNo),grpc.WithTransportCredentials(insecure.NewCredentials()))
-        if err != nil {
-            log.Printf("[Runner] Failed to dial node %d : %v", nodeConfig.NodeId ,err)
-            continue
-        }
-
-        runner.nodeClients[nodeConfig.NodeId] = pb.NewMessageServiceClient(conn)
-    }
 
     // Extra code just placing it here
     logFile, err := os.OpenFile("runnerlog.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -65,6 +67,92 @@ func NewRunner() *Runner {
     return runner
 }
 
+
+func(r *Runner) buildNodeConnections(){
+    for _, nodeConfig := range r.currentConfig.NodeConfigs {
+        conn, err := grpc.NewClient(fmt.Sprintf(":%d", nodeConfig.PortNo),grpc.WithTransportCredentials(insecure.NewCredentials()))
+        if err != nil {
+            log.Printf("[Runner] Failed to dial node %d : %v", nodeConfig.NodeId ,err)
+            continue
+        }
+
+        r.nodeClients[nodeConfig.NodeId] = pb.NewMessageServiceClient(conn)
+    }
+}
+
+
+func (r *Runner) configureAllNodes(config *ClusterConfiguration) error {
+    log.Println("[Runner] Configuring all nodes...")
+    pbNodeConfigs := make([]*pb.NodeConfig, len(config.NodeConfigs))
+
+    for i, cfg := range config.NodeConfigs {
+        pbNodeConfigs[i] = &pb.NodeConfig{
+            NodeId: cfg.NodeId,
+            ClusterId: cfg.ClusterId,
+            Port: cfg.PortNo,
+        }
+    }
+
+    configReq := &pb.ConfigureClusterRequest{
+        NumOfClusters: config.NumClusters,
+        NodesPerCluster: config.NodesPerCluster,
+        TotalDataPoints: config.TotalDataItems,
+        NodeConfigs: pbNodeConfigs,
+    }
+
+    for _, cfg := range config.NodeConfigs {
+        grpcClient, exists := r.nodeClients[cfg.NodeId]  // Use nodeClients, not controlClients
+        if !exists {
+            log.Printf("[Runner] No client for node %d", cfg.NodeId)
+            return fmt.Errorf("missing client for node %d", cfg.NodeId)
+        }
+
+        _, err := grpcClient.ConfigureCluster(context.Background(), configReq)
+
+        if err != nil {
+            log.Printf("[Runner] Failed to configure node %d: %v", cfg.NodeId, err)
+            return err
+        }
+    }
+    log.Println("[Runner] Configuring all nodes complete")
+    return nil
+}
+
+func (r *Runner) killAllNodes() {
+    fmt.Println("\nShutting down all nodes...")
+
+    r.muConfig.RLock()
+    config := r.currentConfig
+    r.muConfig.RUnlock()
+
+    if config != nil {
+        for _, cfg := range config.NodeConfigs {
+            grpcClient, exists := r.nodeClients[cfg.NodeId] 
+            if grpcClient != nil && exists {
+                grpcClient.Shutdown(context.Background(), &emptypb.Empty{}) 
+            }
+        }
+
+        time.Sleep(1 * time.Second)
+
+        // This is not working
+        exec.Command("osascript", "-e", `
+            tell application "Terminal"
+                repeat with w in windows
+                    if name of w contains "go run" then
+                        do script "exit" in w
+                    end if
+                end repeat
+            end tell
+        `).Run()
+    }
+
+    
+
+    r.nodeProcesses = make([]*exec.Cmd, 0)
+    r.nodeClients = make(map[int32]pb.MessageServiceClient)
+}
+
 func (r *Runner) RunAllTestSets() {
     r.testCases = getAllTestCases()
 
@@ -73,9 +161,7 @@ func (r *Runner) RunAllTestSets() {
         return
     }
 
-    // 1. Build client
-    r.client,_ = NewClient(9000)
-    r.client.startGrpcServer()
+    reader := bufio.NewReader(os.Stdin)
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
         // if setNum > 2 {
@@ -87,32 +173,141 @@ func (r *Runner) RunAllTestSets() {
         fmt.Printf("[Runner] Running Set %d — live nodes %v\n", tc.SetNumber, tc.LiveNodes)
         fmt.Printf("=========================================\n")
 
-        // Reset last set before new one starts
-        // if setNum > 1 {
-        //     r.CleanupAfterSet()
-        //     r.ResetAllClients(r.localClients)
-        // }
+        config := r.askForClusterConfig(reader)
+        r.spawnNodes(config)
 
-        // r.CleanupStateAndWAL()
+        // Waiting for terminal to start
+        time.Sleep(time.Duration(config.NodesPerCluster) * time.Second)
 
+        log.Printf("[Runner] Building server grpc connections")
+        r.buildNodeConnections()
+        log.Printf("[Runner] Building server grpc connections complete")
+
+        // Building client
+        log.Printf("[Runner] Building client")
+        r.client, _ = NewClient(9000)
+        r.client.startGrpcServer()
+        r.client.SetClusterConfig(config.NumClusters, config.NodesPerCluster, 
+            config.TotalDataItems, config.NodeConfigs)
+        log.Printf("[Runner] Building client complete")
+
+        r.configureAllNodes(config)
+
+         // Make this active after a while
         // r.UpdateActiveNodes(tc.LiveNodes)
 
         // Execute transactions
-        start := time.Now()
-        // need to spawn this in go routine
         r.ExecuteTestCase(tc)
-        end := time.Since(start)
-        log.Printf("[Runner] Total time elapsed %v",end)
         
         r.showInteractiveMenu()
-        // r.PrintStatusAll()
+
+        r.killAllNodes() 
+        r.cleanup()
     }
 
     log.Printf("All test sets complete")
 
     // Client connection cleanup
-    r.client.closeAllConnections()
+    if r.client != nil {          // ✅ guard
+        r.client.closeAllConnections()
+    }
     log.Println("[Runner] All sets complete.")
+}
+
+
+func (r *Runner) spawnNodes(config *ClusterConfiguration) {
+    projectDir := "/Users/limarkdcunha/Desktop/dist-sys/project3/code"
+
+    for _, cfg := range config.NodeConfigs {
+		cmd := exec.Command("osascript", "-e",
+			fmt.Sprintf(`tell application "Terminal" to do script "cd %s && go run . -s node %d %d"`,
+			projectDir, cfg.NodeId, cfg.PortNo))
+
+		err := cmd.Run()
+		if err != nil {
+			log.Println("Failed to spawn Node", cfg.NodeId, ":", err)
+		} else {
+			log.Println("Spawned Node ", cfg.NodeId, "on port", cfg.PortNo)
+		}
+	}
+}
+
+func (r *Runner) askForClusterConfig(reader *bufio.Reader) *ClusterConfiguration {
+    fmt.Println("     CLUSTER CONFIGURATION INPUT        ")
+    
+    var numClusters, nodesPerCluster int
+
+    for {
+        fmt.Print("\nEnter number of clusters: ") 
+        clustersStr, _ := reader.ReadString('\n')
+        clustersStr = strings.TrimSpace(clustersStr)
+        
+        var err error
+        numClusters, err = strconv.Atoi(clustersStr)
+        
+        if err != nil || numClusters <= 0 || numClusters > 10 {
+            fmt.Println("Invalid input. Please enter a number between 1 and 10.")
+            continue
+        }
+        break
+    }
+
+    for {
+        fmt.Print("Enter nodes per cluster: ")
+        nodesStr, _ := reader.ReadString('\n')
+        nodesStr = strings.TrimSpace(nodesStr)
+        
+        var err error
+        nodesPerCluster, err = strconv.Atoi(nodesStr)
+        
+        if err != nil || nodesPerCluster <= 0 || nodesPerCluster > 15 {
+            fmt.Println("Invalid input. Please enter a number between 1 and 15.")
+            continue
+        }
+        break
+    }
+
+    totalDataItems := int32(9000)
+    basePort := int32(8001)
+
+    nodeConfigs := r.generateNodeConfigs(int32(numClusters), int32(nodesPerCluster), basePort)
+
+    config := &ClusterConfiguration{
+        NumClusters:     int32(numClusters),
+        NodesPerCluster: int32(nodesPerCluster),
+        TotalDataItems:  totalDataItems,
+        BasePort:        basePort,
+        NodeConfigs:     nodeConfigs,
+    }
+
+    r.muConfig.Lock()
+    r.currentConfig = config
+    r.muConfig.Unlock()
+
+    return config
+}
+
+
+func (r *Runner) generateNodeConfigs(numClusters, nodesPerCluster, basePort int32) []NodeConfig {
+    totalNodes := numClusters * nodesPerCluster
+    configs := make([]NodeConfig, 0, totalNodes)
+
+    nodeId := int32(1)
+    portNo := basePort
+
+    for clusterId := int32(1); clusterId <= numClusters; clusterId++ {
+        for i := int32(0); i < nodesPerCluster; i++ {
+            configs = append(configs, NodeConfig{
+                NodeId:    nodeId,
+                ClusterId: clusterId,
+                PortNo:    portNo,
+            })
+            nodeId++
+            portNo++
+        }
+    }
+    
+    return configs
 }
 
 func (r *Runner) ExecuteTestCase(tc TestCase) {
@@ -254,6 +449,26 @@ func (r *Runner) showInteractiveMenu() {
     }
 }
 
+func (r *Runner) cleanup() {
+    fmt.Println("\n[Runner] Cleaning up persistence...")
+    
+    // 1. Delete all node state/WAL files
+    CleanupPersistence()  // This deletes logs/, state/, wal/ directories
+    
+    // 2. Reset runner's configuration
+    r.muConfig.Lock()
+    r.currentConfig = nil
+    r.muConfig.Unlock()
+    
+    // 3. Close and cleanup client
+    if r.client != nil {
+        r.client.closeAllConnections()
+        r.client = nil
+    }
+    
+    fmt.Println("✓ Cleanup complete")
+}
+
 func (r *Runner) FailNodeCommand(targetNodeId int32){
     client, exists := r.nodeClients[targetNodeId]
     if !exists {
@@ -285,7 +500,7 @@ func (r *Runner) RecoverNodeCommand(targetNodeId int32){
 
 
 func (r *Runner) UpdateActiveNodes(liveNodes []int) {
-    for _, cfg := range r.nodeConfigs {
+    for _, cfg := range r.currentConfig.NodeConfigs {
         client, exists := r.nodeClients[int32(cfg.NodeId)]
         if !exists {
             log.Printf("[Runner] No connection to node %d", cfg.NodeId)
@@ -309,7 +524,11 @@ func (r *Runner) UpdateActiveNodes(liveNodes []int) {
 }
 
 func (r *Runner) PrintStatusAll() {
-    for _, nodeCfg := range getNodeCluster() {
+    r.muConfig.RLock()
+    configs := r.currentConfig.NodeConfigs
+    r.muConfig.RUnlock()
+
+    for _, nodeCfg := range configs {
         client, exists := r.nodeClients[int32(nodeCfg.NodeId)]
         if !exists {
             log.Printf("[Runner] No connection to node %d", nodeCfg.NodeId)
@@ -324,6 +543,27 @@ func (r *Runner) PrintStatusAll() {
     }
 }
 
+
+func (r *Runner) getClusterId(id int32) int32 {
+	r.muConfig.RLock()
+	totalDataPoints := r.currentConfig.TotalDataItems
+    numClusters := r.currentConfig.NumClusters
+    r.muConfig.RUnlock()
+
+	if id < 1 || id > totalDataPoints {
+        return -1
+    }
+    
+    itemsPerShard := totalDataPoints / numClusters
+    clusterId := ((id - 1) / itemsPerShard) + 1
+    
+    if clusterId > numClusters {
+        clusterId = numClusters
+    }
+    
+    return clusterId
+}
+
 func (r *Runner) PrintBalanceAll(datapoint string){
     datapointInt, err := strconv.ParseInt(datapoint, 10, 0)
 	if err != nil {
@@ -331,7 +571,7 @@ func (r *Runner) PrintBalanceAll(datapoint string){
         return
 	}
 
-    targetClusterId := getClusterId(int32(datapointInt))
+    targetClusterId := r.getClusterId(int32(datapointInt))
 
     r.client.muCluster.RLock()
     targetNodeIds := r.client.clusterInfo[targetClusterId].NodeIds

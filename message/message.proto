@@ -138,6 +138,19 @@ message PrintBalanceReq {
   string Datapoint = 1;
 }
 
+message NodeConfig {
+  int32 NodeId = 1;
+  int32 ClusterId = 2;
+  int32 Port = 3;
+}
+
+message ConfigureClusterRequest{
+  int32 NumOfClusters = 1;
+  int32 NodesPerCluster = 2;
+  int32 TotalDataPoints = 3;
+  repeated NodeConfig node_configs = 5;
+}
+
 service MessageService {
   rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
   rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
@@ -159,6 +172,9 @@ service MessageService {
   rpc HandleTwoPCAck(TwoPCAckMessage) returns (google.protobuf.Empty);
 
   // Project helpers
+  rpc ConfigureCluster(ConfigureClusterRequest) returns (google.protobuf.Empty);
+  rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty);
+  
   rpc PrintAcceptLog(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc FailNode(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc RecoverNode(google.protobuf.Empty) returns (google.protobuf.Empty);

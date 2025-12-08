@@ -166,17 +166,21 @@ type Node struct {
 
 	wal *WriteAheadLog
 
+	// Implementation details
 	peers map[int32]pb.MessageServiceClient
 	clientSideGrpcClient pb.ClientServiceClient
+
+	muConfig sync.RWMutex
+    numClusters int32
+    nodesPerCluster int32
+    totalDataPoints int32
+    nodeConfigsMap []NodeConfig
+
+	shutdownChan     chan struct{}
 }	
 
 
 func NewNode(nodeId, portNo int32) (*Node, error) {
-	// myBallot := &pb.BallotNumber{
-	// 	NodeId: nodeId,
-	// 	RoundNumber: 0,
-	// }
-
 	defaultPromisedBallot := &pb.BallotNumber{
 		NodeId: 0,
 		RoundNumber: 0,
@@ -185,7 +189,6 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 	newNode :=  &Node{
 		nodeId: nodeId,
 		portNo: portNo,
-		// myBallot: myBallot,
 		promisedBallotAccept:defaultPromisedBallot,
 		promisedBallotPrepare: defaultPromisedBallot,
 		currentSeqNo: 0,
@@ -207,6 +210,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		pendingAckReplies:make(map[string]*pb.ReplyMessage),
 		ackReplies:make(map[string]*pb.TwoPCAckMessage),
 		twoPCPreparedCache:make(map[string]*pb.TwoPCPreparedMessage),
+		shutdownChan: make(chan struct{}),
 	}
 
 	randomTime := time.Duration(rand.Intn(100)+200) * time.Millisecond
@@ -214,9 +218,6 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 
 	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)
 
-	newNode.muCluster.Lock()
-	newNode.clusterId = newNode.getMyClusterId()
-	newNode.muCluster.Unlock()
 
 	newNode.prepareLog = PrepareLog{
 		log: make([]*pb.PrepareMessage,0),
@@ -227,29 +228,21 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 	wal, _ := NewWriteAheadLog(nodeId, dataDir)
 	newNode.wal = wal
 
-	
-	newNode.buildClusterMap()
-
-	// Building gprc connections
-	newNode.buildPeerGrpcConnections()
+	// Building client side gprc connection
 	newNode.registerClientSideGrpcConnection()
-
-	lenNodes := len(newNode.getAllClusterNodes())
-	newNode.N = int32(lenNodes)
-	newNode.f = (newNode.N  - 1) / 2
-
-	// TO DO make this shard size (3000) dynamic
-	if err := newNode.loadState(newNode.clusterId,int32(3000)); err != nil {
-        return nil, fmt.Errorf("failed to load initial state: %w", err)
-    }
-    log.Printf("[Node %d] State successfully loaded into memory.", newNode.nodeId)
 
 	return newNode,nil
 }
 
 func(node *Node) buildPeerGrpcConnections(){
+	node.muConfig.RLock()
+    configs := node.nodeConfigsMap
+    node.muConfig.RUnlock()
+
+	node.peers = make(map[int32]pb.MessageServiceClient)
+
 	// Building peer (grpc) connections
-	for _, nodeConfig := range getNodeCluster() {
+	for _, nodeConfig := range configs {
         if nodeConfig.NodeId == node.nodeId {
             continue
         }
@@ -268,33 +261,43 @@ func(node *Node) buildPeerGrpcConnections(){
 }
 
 func(node *Node) buildClusterMap(){
+	node.muConfig.RLock()
+    configs := node.nodeConfigsMap
+	nodesPerCluster := node.nodesPerCluster
+    node.muConfig.RUnlock()
+
 	node.muCluster.Lock()
     defer node.muCluster.Unlock()
 
-	for _, nodeConfig := range getNodeCluster() {
-		info, exists := node.clusterInfo[nodeConfig.ClusterId]
+	node.clusterInfo = make(map[int32]*ClusterInfo)
 
-		if !exists {
-			info = &ClusterInfo{
+	for _, nodeConfig := range configs {
+        info, exists := node.clusterInfo[nodeConfig.ClusterId]
+        if !exists {
+            firstNodeId := (nodeConfig.ClusterId-1)*nodesPerCluster + 1
+            info = &ClusterInfo{
                 ClusterId: nodeConfig.ClusterId,
                 NodeIds:   []int32{},
-                LeaderId:  (nodeConfig.ClusterId-1)*3+1,
+                LeaderId:  firstNodeId,
             }
-
-			node.clusterInfo[nodeConfig.ClusterId] = info
-		}
-
-		info.NodeIds = append(info.NodeIds, nodeConfig.NodeId)
-	} 
+            node.clusterInfo[nodeConfig.ClusterId] = info
+        }
+        info.NodeIds = append(info.NodeIds, nodeConfig.NodeId)
+    } 
 }
 
 func (node *Node) getMyClusterId() int32 {
-    for _, cfg := range getNodeCluster() {
+    node.muConfig.RLock()
+    configs := node.nodeConfigsMap
+    node.muConfig.RUnlock()
+    
+    for _, cfg := range configs {
         if cfg.NodeId == node.nodeId {
             return cfg.ClusterId
         }
     }
-    log.Fatalf("[Node %d] FATAL: cannot find own ClusterId in getNodeCluster()", node.nodeId)
+    
+    log.Fatalf("[Node %d] FATAL: cannot find own ClusterId", node.nodeId)
     return -1
 }
 

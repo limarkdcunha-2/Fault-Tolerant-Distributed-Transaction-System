@@ -25,6 +25,7 @@ type AbortAction struct {
 	reqKey string
 	sender string
 	receiver string
+	isStateRevertNeeded bool
 }
 
 type NodeStatus int
@@ -164,6 +165,9 @@ type Node struct {
 	muAck sync.RWMutex
 	ackReplies map[string]*pb.TwoPCAckMessage
 
+	muFirstTimeAbortAck sync.RWMutex
+	shouldSendAckForFirstTimeAbort map[string]bool
+
 	wal *WriteAheadLog
 
 	peers map[int32]pb.MessageServiceClient
@@ -207,6 +211,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		pendingAckReplies:make(map[string]*pb.ReplyMessage),
 		ackReplies:make(map[string]*pb.TwoPCAckMessage),
 		twoPCPreparedCache:make(map[string]*pb.TwoPCPreparedMessage),
+		shouldSendAckForFirstTimeAbort:make(map[string]bool),
 	}
 
 	randomTime := time.Duration(rand.Intn(100)+200) * time.Millisecond

@@ -216,6 +216,7 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
 	node.nodeId,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
 	node.muBallot.RLock()
+	roundNumber := node.promisedBallotAccept.RoundNumber
     leaderId := node.promisedBallotAccept.NodeId
     node.muBallot.RUnlock()
 
@@ -312,26 +313,55 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
 	}
 
 	go node.sendTwoPCAbortToParticipant(abortMsg)
+
+	// Send reply to client
+	abortReply := &pb.ReplyMessage{
+		Ballot: &pb.BallotNumber{
+			NodeId: leaderId,
+			RoundNumber: roundNumber,
+		},
+		ClientRequestTimestamp: abortMsg.Request.Timestamp,
+		ClientId: abortMsg.Request.ClientId,
+		Status: "failure",
+	}
+
+	node.muReplies.Lock()
+	node.replies[reqKey] = abortReply
+	node.muReplies.Unlock()
+
+	go node.sendReplyToClient(abortReply)
 }
 
 
 func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
-	targetLeaderId := node.findTargetLeaderId(msg.Request.Transaction.Receiver)
+	targetClusterNodes  := node.findTargetClusterIds(msg.Request.Transaction.Receiver)
 
 	for {
 		if !node.shouldKeepSendingAbort(msg.Request){
 			break
 		}
 
-		log.Printf("[Node %d] Sending 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
-		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
-		
-		_, err := node.peers[targetLeaderId].HandleTwoPCAbortAsParticipant(context.Background(),msg)
-		if err != nil {
-			log.Printf("[Node %d] Failed to 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
-			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
+		for _, nodeId := range targetClusterNodes {
+			peerClient, ok := node.peers[nodeId]
+
+			log.Printf("[Node %d] Sending 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
+			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,nodeId)
+
+			if !ok {
+				log.Printf("[Node %d] ERROR: No peer client connection found for Node %d. Skipping 2PC ABORT broadcast.", 
+					node.nodeId, nodeId)
+				continue
+			}
+
+			go func(id int32, client pb.MessageServiceClient) {
+				_, err := client.HandleTwoPCAbortAsParticipant(context.Background(),msg)
+				if err != nil {
+					log.Printf("[Node %d] Failed to 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
+					msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,id)
+				}
+			}(nodeId, peerClient)
 		}
-		
+
 		time.Sleep(10*time.Millisecond)
 	}
 }

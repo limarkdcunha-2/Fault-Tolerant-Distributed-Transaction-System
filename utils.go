@@ -196,6 +196,19 @@ func(node *Node) findTargetLeaderId(datapoint string) (int32) {
     return targetLeaderId
 }
 
+func(node *Node) findTargetClusterIds(datapoint string) []int32 {
+    datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
+    
+    targetClusterId := getClusterId(int32(datapointInt))
+    // log.Printf("[Node %d] target cluster Id=%d",node.nodeId,targetClusterId)
+
+    node.muCluster.RLock()
+    targetNodes := node.clusterInfo[targetClusterId].NodeIds
+    node.muCluster.RUnlock()
+    // log.Printf("[Node %d] targetLeaderId=%d",node.nodeId,targetLeaderId)
+    return targetNodes
+}
+
 func(node *Node) shouldKeepSendingAbort(req *pb.ClientRequest) bool {
     node.muCrossSharTxs.RLock()
     defer node.muCrossSharTxs.RUnlock()  

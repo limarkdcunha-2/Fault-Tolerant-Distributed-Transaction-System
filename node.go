@@ -152,6 +152,9 @@ type Node struct {
 	muTwoPcPrepareQueue sync.RWMutex
 	twoPcPrepareQueue []*pb.TwoPCPrepareMessage
 
+	muTwoPcAbortQueue sync.RWMutex
+	twoPcAbortQueue []*pb.TwoPCAbortMessage
+
 	muCrossSharTxs sync.RWMutex
 	crossSharTxs map[string]*CrossShardTrans
 
@@ -212,6 +215,8 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		ackReplies:make(map[string]*pb.TwoPCAckMessage),
 		twoPCPreparedCache:make(map[string]*pb.TwoPCPreparedMessage),
 		shouldSendAckForFirstTimeAbort:make(map[string]bool),
+		twoPcAbortQueue:make([]*pb.TwoPCAbortMessage, 0),
+		twoPcPrepareQueue: make([]*pb.TwoPCPrepareMessage, 0),
 	}
 
 	randomTime := time.Duration(rand.Intn(100)+200) * time.Millisecond

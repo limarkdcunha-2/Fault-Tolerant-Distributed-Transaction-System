@@ -216,7 +216,7 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
 	node.nodeId,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
 	node.muBallot.RLock()
-	roundNumber := node.promisedBallotAccept.RoundNumber
+	// roundNumber := node.promisedBallotAccept.RoundNumber
     leaderId := node.promisedBallotAccept.NodeId
     node.muBallot.RUnlock()
 
@@ -296,8 +296,6 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
 	log.Printf("[Node %d] Seq=%d timeout confirmed, starting ABORT actions and consensus", 
         node.nodeId, seq)
 
-	node.handleAbortActions(reqKey)
-
 	abortAccept := &pb.AcceptMessage{
         Ballot:      selfAcceptedMessage.Ballot,
         SequenceNum: seq,
@@ -305,35 +303,12 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
         AcceptType:  pb.AcceptType_ABORT,
     }
 
-	go node.broadcastAcceptMessage(abortAccept)
-
-	abortMsg := &pb.TwoPCAbortMessage {
-		Request: selfAcceptedMessage.Request,
-		NodeId: node.nodeId,
-	}
-
-	go node.sendTwoPCAbortToParticipant(abortMsg)
-
-	// Send reply to client
-	abortReply := &pb.ReplyMessage{
-		Ballot: &pb.BallotNumber{
-			NodeId: leaderId,
-			RoundNumber: roundNumber,
-		},
-		ClientRequestTimestamp: abortMsg.Request.Timestamp,
-		ClientId: abortMsg.Request.ClientId,
-		Status: "failure",
-	}
-
-	node.muReplies.Lock()
-	node.replies[reqKey] = abortReply
-	node.muReplies.Unlock()
-
-	go node.sendReplyToClient(abortReply)
+	node.broadcastAcceptMessage(abortAccept)
 }
 
 
 func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
+	targetLeaderId := node.findTargetLeaderId(msg.Request.Transaction.Receiver)
 	targetClusterNodes  := node.findTargetClusterIds(msg.Request.Transaction.Receiver)
 
 	for {
@@ -341,11 +316,32 @@ func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
 			break
 		}
 
+		log.Printf("[Node %d] Sending 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
+			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
+
+		peerClient, ok := node.peers[targetLeaderId]
+		if !ok {
+			log.Printf("[Node %d] ERROR: No peer client connection found for Node %d. Skipping 2PC COMMIT broadcast.", 
+				node.nodeId, targetLeaderId)
+		} else {
+			_, err := peerClient.HandleTwoPCAbortAsParticipant(context.Background(),msg)
+			if err != nil {
+				log.Printf("[Node %d] Failed to 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
+				msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
+			}
+		}
+
+		time.Sleep(10*time.Millisecond)
+
+		if !node.shouldKeepSendingAbort(msg.Request){
+			break
+		}
+
+		log.Printf("[Node %d] Broadcasting 2PC ABORT(%s, %s, %d) to nodes=%s",node.nodeId,
+			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetClusterNodes)
+
 		for _, nodeId := range targetClusterNodes {
 			peerClient, ok := node.peers[nodeId]
-
-			log.Printf("[Node %d] Sending 2PC ABORT(%s, %s, %d) to node=%d",node.nodeId,
-			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,nodeId)
 
 			if !ok {
 				log.Printf("[Node %d] ERROR: No peer client connection found for Node %d. Skipping 2PC ABORT broadcast.", 

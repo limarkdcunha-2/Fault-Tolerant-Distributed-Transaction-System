@@ -266,7 +266,7 @@ func(node *Node) sendTwoPCPrepare(msg *pb.TwoPCPrepareMessage){
 	targetLeaderId := node.findTargetLeaderId(msg.Request.Transaction.Receiver)
 
 	log.Printf("[Node %d] Sending 2PC PREPARE to node=%d",node.nodeId,targetLeaderId)
-
+	// time.Sleep(1*time.Second)
 	_, err := node.peers[targetLeaderId].HandleTwoPCPrepare(context.Background(),msg)
 
 	if err != nil {
@@ -731,8 +731,6 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 	if !node.isBallotEqual(entry.Ballot,msg.Ballot) {
 		log.Printf("[Node %d] REJECTED ACCEPTED(%s) Ballot mismatch for (R:%d, S:%d).",
 			node.nodeId,msg.AcceptType, msg.Ballot.RoundNumber, msg.SequenceNum)
-		// log.Printf("[Node %d] Entry ballot (R:%d,N:%d) msg ballot (R:%d,N:%d)",
-		// node.nodeId,entry.Ballot.RoundNumber,entry.Ballot.NodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
 		
 		entry.mu.Unlock()
 		return &emptypb.Empty{}, nil
@@ -810,6 +808,14 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 						node.releaseLock(msg.Request.Transaction.Sender)
 						log.Printf("[Node %d] Released lock on datapoint (%s)",node.nodeId,msg.Request.Transaction.Sender)
 
+						//  Sending 2PC commmit participant cluster
+						commitMsg := &pb.TwoPCCommitMessage{
+							Request: msg.Request,
+							NodeId: node.nodeId,
+						}
+
+						go node.sendTwoPCCommit(commitMsg)
+
 						// Send reply back to client here
 						node.removePendingRequest(msg.Request.ClientId,msg.Request.Timestamp)
 
@@ -853,10 +859,42 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 						}
 					}
 				} else if msg.AcceptType == pb.AcceptType_ABORT {
-					isReceiverShard := datapointInShard(commitMsg.Request.Transaction.Receiver,node.clusterId)
-					// Locks release will be talen care of handleAbort function
-					// The job of this ABORT is simply to replicate
-					if isReceiverShard {
+					isSenderShard := datapointInShard(commitMsg.Request.Transaction.Sender,node.clusterId)
+
+					if isSenderShard {
+						// If 2nd round ABORT from coordinator side
+						// Then reply to client
+						// Send 2PC ABORT to pariticpant cluster
+						// perform abort actions
+						reqKey := makeRequestKey(commitMsg.Request.ClientId,msg.Request.Timestamp)
+
+						abortMsg := &pb.TwoPCAbortMessage {
+							Request: commitMsg.Request,
+							NodeId: node.nodeId,
+						}
+
+						go node.sendTwoPCAbortToParticipant(abortMsg)
+
+						// Send reply to client
+						abortReply := &pb.ReplyMessage{
+							Ballot: &pb.BallotNumber{
+								NodeId: commitMsg.Ballot.NodeId,
+								RoundNumber: commitMsg.Ballot.RoundNumber,
+							},
+							ClientRequestTimestamp: abortMsg.Request.Timestamp,
+							ClientId: abortMsg.Request.ClientId,
+							Status: "failure",
+						}
+
+						node.muReplies.Lock()
+						node.replies[reqKey] = abortReply
+						node.muReplies.Unlock()
+
+						// Lock will be released inside this
+						node.handleAbortActions(reqKey)
+					} else {
+						// Locks release will be talen care of handleAbort function
+						// The job of this ABORT is simply to replicate
 						// Send ACK message to coordinator cluster
 						ackMsg := &pb.TwoPCAckMessage{
 							Request: commitMsg.Request,
@@ -871,7 +909,9 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 						log.Printf("[Node %d] Sending ACK message for seq=%d",node.nodeId,commitMsg.SequenceNum)
 						go node.sendAckMessageToCoordinator(ackMsg)
-					}
+						
+						node.handleAbortActions(reqKey)
+					} 
 				}
 
 
@@ -937,19 +977,19 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 					log.Printf("[Node %d] Checking first time abort send for reqKey=%s",node.nodeId,reqKey)
 					node.muFirstTimeAbortAck.RUnlock()
 
+					ackMessage := &pb.TwoPCAckMessage{
+						Request: msg.Request,
+						NodeId: node.nodeId,
+						AckType: "ABORT",
+					}
+
+					node.muAck.Lock()
+					node.ackReplies[reqKey] = ackMessage
+					node.muAck.Unlock()
+
 					// This will be needed in participant cluster leader failure scenario
+					// Dont mess with this if block
 					if exists {
-						ackMessage := &pb.TwoPCAckMessage{
-							Request: msg.Request,
-							NodeId: node.nodeId,
-							AckType: "ABORT",
-						}
-
-
-						node.muAck.Lock()
-						node.ackReplies[reqKey] = ackMessage
-						node.muAck.Unlock()
-
 						go node.sendAckMessageToCoordinator(ackMessage)
 
 					} else {
@@ -990,7 +1030,7 @@ func(node *Node) sendTwoPCPrepared(preparedMsg *pb.TwoPCPreparedMessage){
 					
 	log.Printf("[Node %d] Sending 2PC PREPARED(%s, %s, %d) to node=%d",preparedMsg.NodeId,preparedMsg.Request.Transaction.Sender,
 	preparedMsg.Request.Transaction.Receiver,preparedMsg.Request.Transaction.Amount,targetLeaderId)
-
+	// time.Sleep(1*time.Second)
 	_ ,err := node.peers[targetLeaderId].HandleTwoPCPrepared(context.Background(),preparedMsg)
 
 	if err != nil {
@@ -1227,6 +1267,7 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 			// 6 Execute
 			go node.executeInOrder(false)
 		} else if isSecondRoundAbort {
+			// This is only possible in coordinator side
 			if entry.TwoPCPhase >= PhaseCommitted {
 				log.Printf("[Node %d] INFO: Already committed/executed Seq=%d. Ignoring duplicate COMMIT.",
 					node.nodeId, msg.SequenceNum)
@@ -1816,7 +1857,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		node.drainQueuedRequests(msg.Ballot)
 		log.Printf("[Node %d] Draining queued requests complete (as leader)",node.nodeId)
 
-		node.drainQueuedTwoPCPrepares(msg.Ballot)
+		node.drainQueuedTwoPCPreparesAndAborts(msg.Ballot)
 		log.Printf("[Node %d] Draining queued 2PC PREPARE complete (as leader)",node.nodeId)
 
 		return &emptypb.Empty{},nil
@@ -2334,20 +2375,42 @@ func(node *Node) drainQueuedRequests(ballot *pb.BallotNumber){
     }
 }
 
-func(node *Node) drainQueuedTwoPCPrepares(ballot *pb.BallotNumber){
-	node.muReqQue.Lock()
-    queued := node.twoPcPrepareQueue
+func(node *Node) drainQueuedTwoPCPreparesAndAborts(ballot *pb.BallotNumber){
+	node.muTwoPcPrepareQueue.Lock()
+    queuedPrepares := node.twoPcPrepareQueue
     node.twoPcPrepareQueue = make([]*pb.TwoPCPrepareMessage, 0)
-    node.muReqQue.Unlock()
+    node.muTwoPcPrepareQueue.Unlock()
 
-    if len(queued) == 0 {
+    node.muTwoPcAbortQueue.Lock()
+    queuedAborts := node.twoPcAbortQueue
+    node.twoPcAbortQueue = make([]*pb.TwoPCAbortMessage, 0)
+    node.muTwoPcAbortQueue.Unlock()
+
+    if len(queuedPrepares) == 0 && len(queuedAborts) == 0 {
         return
     }
 
-	log.Printf("[Node %d] Draining %d queued 2PC PREPARE complete", node.nodeId, len(queued))
-    for _, prepareMsg := range queued {
-		go node.handleTwoPCPrepareAfterLeaderPresent(prepareMsg,ballot.NodeId)
+	// Building an ABORT map
+	abortedReqKeys := make(map[string]*pb.TwoPCAbortMessage)
+    for _, abortMsg := range queuedAborts {
+        reqKey := makeRequestKey(abortMsg.Request.ClientId, abortMsg.Request.Timestamp)
+        abortedReqKeys[reqKey] = abortMsg
     }
+
+	for _, prepareMsg := range queuedPrepares {
+        reqKey := makeRequestKey(prepareMsg.Request.ClientId, prepareMsg.Request.Timestamp)
+		if _, hasAbort := abortedReqKeys[reqKey]; hasAbort {
+			continue
+		}
+
+		go node.handleTwoPCPrepareAfterLeaderPresent(prepareMsg,ballot.NodeId)
+	}
+	
+	for _, abortMsg := range queuedAborts {
+		go node.handleTwoPcAbortAfterLeaderPresentInParticipantCluster(abortMsg,ballot.NodeId)
+	}
+
+	log.Printf("[Node %d] Draining of queued 2PC PREPARE and ABORT complete",node.nodeId)
 }
 
 func(node *Node) buildCrossShardQueue(highestCheckpointSeq int32){
@@ -2417,24 +2480,24 @@ func(node *Node) buildCrossShardQueue(highestCheckpointSeq int32){
 				go node.sendTwoPCPrepare(prepareMsg)
 			}
 
-			if AcceptType == pb.AcceptType_ABORT{
-				abortMsg := &pb.TwoPCAbortMessage{
-					Request: Request,
-					NodeId:  node.nodeId,
-				}
+			// if AcceptType == pb.AcceptType_ABORT{
+			// 	abortMsg := &pb.TwoPCAbortMessage{
+			// 		Request: Request,
+			// 		NodeId:  node.nodeId,
+			// 	}
 
-				// This can be problematic if
-				go node.sendTwoPCAbortToParticipant(abortMsg)
-			}
+			// 	// This can be problematic if
+			// 	go node.sendTwoPCAbortToParticipant(abortMsg)
+			// }
 
-			if AcceptType == pb.AcceptType_COMMIT{
-				commitMsg := &pb.TwoPCCommitMessage{
-					Request: Request,
-					NodeId:  node.nodeId,
-				}
+			// if AcceptType == pb.AcceptType_COMMIT{
+			// 	commitMsg := &pb.TwoPCCommitMessage{
+			// 		Request: Request,
+			// 		NodeId:  node.nodeId,
+			// 	}
 
-				go node.sendTwoPCCommit(commitMsg)
-			}
+			// 	go node.sendTwoPCCommit(commitMsg)
+			// }
 
 			if AcceptType == pb.AcceptType_PREPARE || AcceptType == pb.AcceptType_ABORT {
 				txData.Timer.Start()
@@ -2535,7 +2598,7 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 	log.Printf("[Node %d] Draining queued requests complete (as backup)",node.nodeId)
 
 	// 8. Drain queue 2PC prepares
-	node.drainQueuedTwoPCPrepares(msg.Ballot)
+	node.drainQueuedTwoPCPreparesAndAborts(msg.Ballot)
 	log.Printf("[Node %d] Draining queued 2PC PREPAREs complete (as backup)",node.nodeId)
 
 	// 8. Send accepted back for each entry
@@ -2906,6 +2969,17 @@ func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessa
 	}
 	node.muTwoPcPreparedCache.RUnlock()
 
+	// This is needed if we have already RECEIVED ABORT but then receive PREPARE for same request
+	// This is rare scenario but can happen due to network failures
+	// In such case we simply ignore the PREPARE
+	node.muCrossSharTxs.RLock()
+	txData, exists := node.crossSharTxs[reqKey]
+	node.muCrossSharTxs.RUnlock()
+
+	if exists && txData != nil && txData.isCommitOrAbortReceived{
+		return
+	}
+
 	// 2. Check pending requests (assigned seq but not executed)
 	node.muPending.Lock()
 	_, isPending := node.pendingRequests[reqKey]
@@ -2937,7 +3011,7 @@ func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessa
 	// 3. Process as leader of participant cluster
 	node.muLocks.Lock()
 
-	if node.isLocked(msg.Request.Transaction.Receiver) {
+	if !node.isLocked(msg.Request.Transaction.Receiver) {
 		node.muLocks.Unlock()
 		node.muPending.Unlock()
 
@@ -3044,15 +3118,7 @@ func(node *Node) HandleTwoPCPrepared(ctx context.Context,msg *pb.TwoPCPreparedMe
 
 		existingEntry.mu.Unlock()
 
-		// 1. Sending 2PC commmit
-		commitMsg := &pb.TwoPCCommitMessage{
-			Request: selfAcceptedMessage.Request,
-			NodeId: node.nodeId,
-		}
-
-		go node.sendTwoPCCommit(commitMsg)
-
-		// 2. Running consensus for Accept 'C'
+		// Running consensus for Accept 'C'
 		updatedAcceptMessage := &pb.AcceptMessage{
 			Ballot: selfAcceptedMessage.Ballot,
 			SequenceNum: selfAcceptedMessage.SequenceNum,
@@ -3067,6 +3133,7 @@ func(node *Node) HandleTwoPCPrepared(ctx context.Context,msg *pb.TwoPCPreparedMe
 }
 
 func(node *Node) sendTwoPCCommit(msg *pb.TwoPCCommitMessage){
+	targetLeaderId := node.findTargetLeaderId(msg.Request.Transaction.Receiver)
 	targetClusterNodes  := node.findTargetClusterIds(msg.Request.Transaction.Receiver)
 
 	for {
@@ -3074,7 +3141,27 @@ func(node *Node) sendTwoPCCommit(msg *pb.TwoPCCommitMessage){
 			break
 		}
 
-		log.Printf("[Node %d] Sending 2PC COMMIT(%s, %s, %d) to node=%v",node.nodeId,
+		log.Printf("[Node %d] Sending 2PC COMMIT(%s, %s, %d) to node=%d",node.nodeId,
+		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetLeaderId)
+
+		peerClient, ok := node.peers[targetLeaderId]
+		if !ok {
+			log.Printf("[Node %d] ERROR: No peer client connection found for Node %d. Skipping 2PC COMMIT broadcast.", 
+				node.nodeId, targetLeaderId)
+		} else {
+			_, err := peerClient.HandleTwoPCCommit(context.Background(),msg)
+			if err != nil {
+				log.Printf("[Node %d] Failed to send 2PC COMMIT to node=%d",node.nodeId,targetLeaderId)
+			}
+		}
+
+		time.Sleep(10*time.Millisecond)
+
+		if !node.shouldKeepSendingCommmit(msg.Request){
+			break
+		}
+
+		log.Printf("[Node %d] Broadcasting 2PC COMMIT(%s, %s, %d) to node=%v",node.nodeId,
 		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetClusterNodes)
 
 		for _, nodeId := range targetClusterNodes {
@@ -3320,12 +3407,12 @@ func (node *Node) HandleTwoPCAbortAsCoordinator(ctx context.Context, msg *pb.Two
 
     entry.mu.Unlock()
 
-	log.Printf("[Node %d] Executing ABORT(%s, %s, %d) actions for seq=%d", node.nodeId, 
-	msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,seq)
+	// log.Printf("[Node %d] Executing ABORT(%s, %s, %d) actions for seq=%d", node.nodeId, 
+	// msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,seq)
 
-    node.handleAbortActions(reqKey)
-    log.Printf("[Node %d] ABORT(%s, %s, %d) actions complete for seq=%d", node.nodeId, 
-	msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,seq)
+    // // node.handleAbortActions(reqKey)
+    // // log.Printf("[Node %d] ABORT(%s, %s, %d) actions complete for seq=%d", node.nodeId, 
+	// msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,seq)
 
 	// 5. start consensus 2nd round by broadcasting ACCEPT ABORT
 	abortAcceptMsg := &pb.AcceptMessage{
@@ -3373,10 +3460,46 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
     leaderId := node.promisedBallotAccept.NodeId
     node.muBallot.RUnlock()
 
-    if leaderId != node.nodeId {
+	if leaderId == 0 {
+		// 1a Log the prepare messages to be processed after leader is elected
+		node.muTwoPcAbortQueue.Lock()
+
+		// 1b Check if already logged
+		alreadyExists := false
+		for _, existing := range node.twoPcAbortQueue {
+			if node.areTwoPCAbortEqual(existing, msg) {
+				alreadyExists = true
+				break
+			}
+		}
+
+		if !alreadyExists {
+			log.Printf("[Node %d] Adding 2PC ABORT with req (%s, %s, %d) wiht timestamp=%vto queue since leader not known yet",node.nodeId,
+			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,msg.Request.Timestamp)
+
+			node.twoPcAbortQueue = append(node.twoPcAbortQueue, msg)
+
+			if !node.livenessTimer.IsRunning(){
+				log.Printf("[Node %d] Starting liveness timer due to queuing 2PC ABORT messages",node.nodeId)
+				node.livenessTimer.Start()
+			}
+		}
+
+		node.muTwoPcAbortQueue.Unlock()
+
+		return &emptypb.Empty{},nil
+	}
+
+    node.handleTwoPcAbortAfterLeaderPresentInParticipantCluster(msg,leaderId)
+	
+	return &emptypb.Empty{},nil
+}
+
+func(node *Node) handleTwoPcAbortAfterLeaderPresentInParticipantCluster( msg *pb.TwoPCAbortMessage, leaderId int32) {
+	if leaderId != node.nodeId {
         log.Printf("[Node %d] Routing 2PC ABORT to leader %d", node.nodeId, leaderId)
 
-        _, err := node.peers[leaderId].HandleTwoPCAbortAsParticipant(ctx, msg)
+        _, err := node.peers[leaderId].HandleTwoPCAbortAsParticipant(context.Background(), msg)
 
         if err != nil {
             log.Printf("[Node %d] Error routing ABORT to leader %d: %v", node.nodeId, leaderId, err)
@@ -3385,7 +3508,7 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 		if !node.livenessTimer.IsRunning() {
 			node.livenessTimer.Start()
 		}
-        return &emptypb.Empty{}, nil
+        return
     }
 
 	reqKey := makeRequestKey(msg.Request.ClientId,msg.Request.Timestamp)
@@ -3396,7 +3519,7 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 
 	if exists {
 		go node.sendAckMessageToCoordinator(ackMsg)
-		return &emptypb.Empty{}, nil
+		return
 	}
 
 	// Be careful with this mutex
@@ -3405,6 +3528,7 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 
 	// Entry doesnt exist seeing ABORT for the first time as a leader
 	// This could happen when participant leader dies and new leader takes over and new leader hasnt seen the PREPARE
+	// or even PREPARE got lost due to network
 	if !exists || txData == nil {
 
 		// This entry will be overriden in initiateConsensusRound function 
@@ -3427,7 +3551,7 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 		// 2. Runnning as multi paxos for replication
 		node.initiateConsensusRound(msg.Request,pb.AcceptType_ABORT)
 		
-        return &emptypb.Empty{}, nil 
+        return
     }
 	
 	seq := txData.SequenceNum
@@ -3438,7 +3562,7 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 		log.Printf("[Node %d] Rejecting duplicate 2PC ABORT(%s, %s, %d) from node=%d",node.nodeId,
 		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,msg.NodeId)
 		
-		return &emptypb.Empty{}, nil
+		return
 	}
 
 	txData.isCommitOrAbortReceived = true
@@ -3451,7 +3575,7 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 		node.muLog.Unlock()
 		log.Printf("[Node %d] Rejecting 2PC ABORT(%s, %s, %d) message due to log entry not present",node.nodeId,
 		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,)
-		return &emptypb.Empty{}, nil
+		return
 	}
 
 	existingEntry.mu.Lock()
@@ -3487,8 +3611,6 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 
 		existingEntry.mu.Unlock()
 
-		node.handleAbortActions(reqKey)
-
 		updatedAcceptMessage := &pb.AcceptMessage{
 			Ballot: selfAcceptedMessage.Ballot,
 			SequenceNum: selfAcceptedMessage.SequenceNum,
@@ -3497,10 +3619,6 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 		}
 		go node.broadcastAcceptMessage(updatedAcceptMessage)
 	}
-	
-	// Note: ACK message will be send when consensus for ABORT has been achieved
-
-	return &emptypb.Empty{},nil
 }
 
 func(node *Node) HandleTwoPCAck(ctx context.Context, msg *pb.TwoPCAckMessage) (*emptypb.Empty, error) {

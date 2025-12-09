@@ -337,7 +337,7 @@ func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
 			break
 		}
 
-		log.Printf("[Node %d] Broadcasting 2PC ABORT(%s, %s, %d) to nodes=%s",node.nodeId,
+		log.Printf("[Node %d] Broadcasting 2PC ABORT(%s, %s, %d) to nodes=%v",node.nodeId,
 			msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,targetClusterNodes)
 
 		for _, nodeId := range targetClusterNodes {

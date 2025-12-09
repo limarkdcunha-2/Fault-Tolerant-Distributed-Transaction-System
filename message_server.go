@@ -689,7 +689,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 
 	// 6. Acquire Locks
 	node.muLocks.Lock()
-
+	
 	if isIntraShard {
 		if node.isLocked(msg.Request.Transaction.Sender) || node.isLocked(msg.Request.Transaction.Receiver) {
 			log.Printf("[Node %d] CRITICAL Rejecting accept for seq=%d due to locks being held on datapoints(%s,%s)",node.nodeId,
@@ -706,33 +706,35 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 			node.acquireLock(msg.Request.Transaction.Receiver,reqKey)
 		}
 	} else {
-		isSenderShard := datapointInShard(msg.Request.Transaction.Sender,node.clusterId)
+		if msg.AcceptType == pb.AcceptType_PREPARE{
+			isSenderShard := datapointInShard(msg.Request.Transaction.Sender,node.clusterId)
 
-		if isSenderShard {
-			if node.isLocked(msg.Request.Transaction.Sender) {
-				log.Printf("[Node %d] CRITICAL Rejecting accept for seq=%d due to lock being held on datapoint (%s)",node.nodeId,
-						msg.SequenceNum,msg.Request.Transaction.Sender)
+			if isSenderShard {
+				if node.isLocked(msg.Request.Transaction.Sender) {
+					log.Printf("[Node %d] CRITICAL Rejecting accept for seq=%d due to lock being held on datapoint (%s)",node.nodeId,
+							msg.SequenceNum,msg.Request.Transaction.Sender)
 
-				node.muLocks.Unlock()
-				return &emptypb.Empty{}, nil
+					node.muLocks.Unlock()
+					return &emptypb.Empty{}, nil
+				} else {
+					log.Printf("[Node %d] Acquiring lock data point (%s)",
+						node.nodeId,msg.Request.Transaction.Sender)
+
+					node.acquireLock(msg.Request.Transaction.Sender,reqKey)
+				}
 			} else {
-				log.Printf("[Node %d] Acquiring lock data point (%s)",
-					node.nodeId,msg.Request.Transaction.Sender)
+				if node.isLocked(msg.Request.Transaction.Receiver) {
+					log.Printf("[Node %d] CRITICAL Rejecting accept for seq=%d due to lock being held on datapoint (%s)",node.nodeId,
+							msg.SequenceNum,msg.Request.Transaction.Receiver)
 
-				node.acquireLock(msg.Request.Transaction.Sender,reqKey)
-			}
-		} else {
-			if node.isLocked(msg.Request.Transaction.Receiver) {
-				log.Printf("[Node %d] CRITICAL Rejecting accept for seq=%d due to lock being held on datapoint (%s)",node.nodeId,
-						msg.SequenceNum,msg.Request.Transaction.Receiver)
+					node.muLocks.Unlock()
+					return &emptypb.Empty{}, nil
+				} else {
+					log.Printf("[Node %d] Acquiring lock data point (%s)",
+						node.nodeId,msg.Request.Transaction.Receiver)
 
-				node.muLocks.Unlock()
-				return &emptypb.Empty{}, nil
-			} else {
-				log.Printf("[Node %d] Acquiring lock data point (%s)",
-					node.nodeId,msg.Request.Transaction.Receiver)
-
-				node.acquireLock(msg.Request.Transaction.Receiver,reqKey)
+					node.acquireLock(msg.Request.Transaction.Receiver,reqKey)
+				}
 			}
 		}
 	}
@@ -780,7 +782,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
         return &emptypb.Empty{}, nil
     }
 
-	log.Printf("[Node %d] [ACCEPTED] Received(%s) for  Seq=%d  | from Node %d | ballot round=%d",
+	log.Printf("[Node %d] Received ACCEPTED(%s) for  Seq=%d  | from Node %d | ballot round=%d",
 		node.nodeId,msg.AcceptType,msg.SequenceNum,msg.NodeId, msg.Ballot.RoundNumber)
 
 	node.muLog.Lock()
@@ -963,6 +965,9 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 						node.replies[reqKey] = abortReply
 						node.muReplies.Unlock()
 
+						// This line is critical
+						go node.sendReplyToClient(abortReply)
+
 						// Lock will be released inside this
 						node.handleAbortActions(reqKey)
 					} else {
@@ -1032,11 +1037,17 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 		// Send back either PREPARED or ABORT as leader of participant cluster to leader to coorindator cluster
 		if isCrossShard  {
+			
 			if isReceiverShard {
+				log.Printf("[Node %d] Seq=%d COMMIT Inside receiver shard logic",node.nodeId,entry.SequenceNum)
 				// Pariticipant cluster leader
 				targetLeaderId := node.findTargetLeaderId(commitMsg.Request.Transaction.Sender)
-			
+				log.Printf("[Node %d] Seq=%d COMMIT Inside receiver shard logic target leaderId = %d %s",
+				node.nodeId,entry.SequenceNum,targetLeaderId,commitMsg.AcceptType)
+
 				if commitMsg.AcceptType == pb.AcceptType_PREPARE {
+					log.Printf("[Node %d] Seq=%d COMMIT Inside PREPARE floow leaderId = %d",node.nodeId,entry.SequenceNum,targetLeaderId)
+
 					preparedMsg := &pb.TwoPCPreparedMessage{
 						Request: commitMsg.Request,
 						NodeId: node.nodeId,
@@ -3373,7 +3384,7 @@ func (node *Node) HandleTwoPCAbortAsCoordinator(ctx context.Context, msg *pb.Two
         return &emptypb.Empty{}, nil
     }
 
-	log.Printf("[Node %d] Received ABORT(%s, %s, %d) from node=%d",node.nodeId,
+	log.Printf("[Node %d] Received 2PC ABORT(%s, %s, %d) as coordinator from node=%d",node.nodeId,
 	msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,msg.NodeId)
 
 	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
@@ -3427,8 +3438,8 @@ func (node *Node) HandleTwoPCAbortAsCoordinator(ctx context.Context, msg *pb.Two
     node.muLog.Unlock()
 
 	if entry.TwoPCPhase == PhaseCommitted && entry.EntryAcceptType == pb.AcceptType_ABORT {
-        log.Printf("[Node %d] Seq=%d already aborted in 2nd round; ignoring duplicate ABORT(%s, %s, %d)", node.nodeId, 
-		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount,seq)
+        log.Printf("[Node %d] Seq=%d already aborted in 2nd round; ignoring duplicate ABORT(%s, %s, %d)", node.nodeId,seq,
+		msg.Request.Transaction.Sender,msg.Request.Transaction.Receiver,msg.Request.Transaction.Amount)
 
         entry.mu.Unlock()
         return &emptypb.Empty{}, nil

@@ -918,7 +918,7 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 							}
 							log.Printf("[Node %d] build reply copy COMMIT=%d",node.nodeId,msg.SequenceNum)
 
-							delete(node.pendingAckReplies,reqKey)
+							// delete(node.pendingAckReplies,reqKey)
 							node.muPendingAckReplies.Unlock()
 
 							// log.Printf("[Node %d] Dumping pending wait into reply cache INTERMEDIATE",node.nodeId)

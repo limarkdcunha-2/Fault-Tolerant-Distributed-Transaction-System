@@ -78,7 +78,7 @@ func (r *Runner) RunAllTestSets() {
     r.client.startGrpcServer()
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        if setNum != 2 {
+        if setNum != 1 {
             continue
         }
 

@@ -505,6 +505,10 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 		node.promisedBallotAccept = msg.Ballot
 	}
 
+	ballotCopy := &pb.BallotNumber{
+		NodeId: node.promisedBallotAccept.NodeId,
+		RoundNumber: node.promisedBallotAccept.NodeId,
+	}
 	node.muBallot.Unlock()
 
 	// 3. Check if already accepted this message
@@ -535,53 +539,31 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 				log.Printf("[Node %d] Seq=%d already in status %v",
 					node.nodeId, msg.SequenceNum, existingEntry.Phase)
 
-				// If ballot number is higher then overrwrite in accept log and send accepted with new ballot number
-				if isBallotGreater {
+				if node.isBallotLessThan(msg.Ballot,ballotCopy){
 					existingEntry.Ballot = msg.Ballot
 					existingEntry.Request = msg.Request
+				}
 
-					acceptedMessage := &pb.AcceptedMessage{
+				acceptedMessage := &pb.AcceptedMessage{
 						Ballot: existingEntry.Ballot,
 						SequenceNum: existingEntry.SequenceNum,
 						Request: existingEntry.Request,
 						NodeId: node.nodeId,
 						AcceptType: msg.AcceptType,
-					}
+				}
 
-					existingEntry.mu.Unlock()
-					
-					node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
+				existingEntry.mu.Unlock()
+				
+				node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
 
-					// Impt: Start timer if not already running
-					if !node.livenessTimer.IsRunning(){
-						log.Printf("[Node %d] Starting liveness timer due getting accept message 1",node.nodeId)
-						node.livenessTimer.Start()
-					}
+				// Impt: Start timer if not already running
+				if !node.livenessTimer.IsRunning(){
+					log.Printf("[Node %d] Starting liveness timer due getting accept message 1",node.nodeId)
+					node.livenessTimer.Start()
+				}
 
-					go node.sendAcceptedMessage(acceptedMessage)
-					return &emptypb.Empty{}, nil
-				} else {
-					// Ballot number will be equal
-					acceptedMessage := &pb.AcceptedMessage{
-						Ballot: existingEntry.Ballot,
-						SequenceNum: existingEntry.SequenceNum,
-						Request: existingEntry.Request,
-						NodeId: node.nodeId,
-						AcceptType: msg.AcceptType,
-					}
-					existingEntry.mu.Unlock()
-
-					node.markRequestPending(acceptedMessage.Request.ClientId, acceptedMessage.Request.Timestamp)
-
-					// Impt: Start timer if not already running
-					if !node.livenessTimer.IsRunning(){
-						log.Printf("[Node %d] Starting liveness timer due getting accept message 2",node.nodeId)
-						node.livenessTimer.Start()
-					}
-
-					go node.sendAcceptedMessage(acceptedMessage)
-					return &emptypb.Empty{}, nil
-				}			
+				go node.sendAcceptedMessage(acceptedMessage,1)
+				return &emptypb.Empty{}, nil			
 			} 
 		} else if msg.AcceptType == pb.AcceptType_COMMIT || isSecondRoundAbort{
 			// This for sure we know its 2nd round
@@ -618,7 +600,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 						node.livenessTimer.Start()
 					}
 
-					go node.sendAcceptedMessage(acceptedMessage)
+					go node.sendAcceptedMessage(acceptedMessage,2)
 					return &emptypb.Empty{}, nil
 				} else {
 					// Ballot number will be equal
@@ -639,7 +621,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 						node.livenessTimer.Start()
 					}
 
-					go node.sendAcceptedMessage(acceptedMessage)
+					go node.sendAcceptedMessage(acceptedMessage,3)
 					return &emptypb.Empty{}, nil
 				}			
 			}  
@@ -657,7 +639,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 			
 			existingEntry.mu.Unlock()
 
-			go node.sendAcceptedMessage(acceptedMessage)
+			go node.sendAcceptedMessage(acceptedMessage,4)
 			
 			// Mark as pending and start the timer as we will wait for corresponding COMMIT for this accept
 			node.markRequestPending(acceptedMessage.Request.ClientId, acceptedMessage.Request.Timestamp)
@@ -751,7 +733,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 	
 	node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
 
-	go node.sendAcceptedMessage(acceptedMessage)
+	go node.sendAcceptedMessage(acceptedMessage,5)
 
 	// Impt: Start timer if not already running
 	if !node.livenessTimer.IsRunning(){
@@ -762,11 +744,11 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 	return &emptypb.Empty{}, nil
 }
 
-func(node *Node) sendAcceptedMessage(msg *pb.AcceptedMessage){
+func(node *Node) sendAcceptedMessage(msg *pb.AcceptedMessage,src int32){
 	targetId := msg.Ballot.NodeId
 	
-	log.Printf("[Node %d] Sending ACCEPTED(%s) for Ballot (R:%d,N:%d) to node=%d",node.nodeId,
-	msg.AcceptType,msg.Ballot.RoundNumber,msg.Ballot.NodeId,targetId)
+	log.Printf("[Node %d] Sending ACCEPTED(%s) for Ballot (R:%d,N:%d) to node=%d from src=%d",node.nodeId,
+	msg.AcceptType,msg.Ballot.RoundNumber,msg.Ballot.NodeId,targetId,src)
 
 	_, err := node.peers[targetId].HandleAccepted(context.Background(),msg)
 
@@ -2717,16 +2699,21 @@ func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage,highe
 	defer node.muLog.RUnlock()
 
 	for _, entry := range node.acceptLog {
-		entry.mu.Lock()
+		entry.mu.RLock()
 		
 		Ballot := entry.Ballot
 		SequenceNum := entry.SequenceNum
 		Request := entry.Request
 		AcceptType := entry.EntryAcceptType
-		entry.mu.Unlock()
+		entry.mu.RUnlock()
 
 		// No need to send accepted for already checkpointed seq numbers
 		if SequenceNum <= highestCheckpointSeq{
+			continue
+		}
+
+		if node.isBallotGreaterThan(Ballot,msg.Ballot) {
+			log.Printf("[Node %d] Rejecting sending accepted for seq=%d(entire merged log) due to new leader being detected",node.nodeId,SequenceNum)
 			continue
 		}
 
@@ -2738,7 +2725,10 @@ func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage,highe
 			AcceptType: AcceptType,
 		}
 
-		go node.sendAcceptedMessage(acceptedMsg)
+		log.Printf("[Node %d] Sending ACCEPTED (entire merged log) for seq=%d back for NEW VIEW (R:%d,N:%d) ENTRY BALLOT (R:%d,N:%d)",
+		node.nodeId,SequenceNum,msg.Ballot.RoundNumber,msg.Ballot.NodeId,acceptedMsg.Ballot.RoundNumber,acceptedMsg.Ballot.NodeId)
+
+		go node.sendAcceptedMessage(acceptedMsg,6)
 	}
 }
 

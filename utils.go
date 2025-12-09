@@ -104,6 +104,10 @@ func (node *Node) areTwoPCPrepareEqual(m1, m2 *pb.TwoPCPrepareMessage) bool{
     return m1.NodeId == m2.NodeId && node.requestsAreEqual(m1.Request,m2.Request)
 }
 
+func (node *Node) areTwoPCAbortEqual(m1, m2 *pb.TwoPCAbortMessage) bool{
+    return m1.NodeId == m2.NodeId && node.requestsAreEqual(m1.Request,m2.Request)
+}
+
 func (node *Node) computeStateDigest() (string, error) {
 	iter,_ := node.state.NewIter(nil)
     defer iter.Close()
@@ -159,6 +163,15 @@ func (node *Node) isBallotLessThan(b1, b2 *pb.BallotNumber) bool {
     }
 
     return false
+}
+
+
+func isReadOnly(req *pb.ClientRequest) bool{
+    if req == nil || req.Transaction == nil {
+        return false
+    }
+
+    return req.Transaction.Sender == req.Transaction.Receiver
 }
 
 func isIntraShard(req *pb.ClientRequest) bool {

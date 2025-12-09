@@ -34,11 +34,19 @@ func parseTestCases(filePath string) (map[int]TestCase, error) {
 	var currentTestCase *TestCase
 
 	// Regex to parse transactions like "(A, J, 3)" and node lists like "[n1, n2, n3]"
-	txRegex := regexp.MustCompile(`\((?P<sender>\w+),\s*(?P<receiver>\w+),\s*(?P<amount>\d+)\)`)
+	txRegex := regexp.MustCompile(`^\((\w+),\s*(\w+),\s*(\d+)\)$`)
+	
+	// Match read-only: (datapoint) - single value in parentheses
+	readOnlyRegex := regexp.MustCompile(`^\((\w+)\)$`)
+	
+	// Match fail command: F(n5) or F(n2)
+	failRegex := regexp.MustCompile(`^F\(n(\d+)\)$`)
+	
+	// Match recover command: R(n5) or R(n2)
+	recoverRegex := regexp.MustCompile(`^R\(n(\d+)\)$`)
+	
+	// Match node list: [n1, n2, n4, n5, n7, n8]
 	nodeRegex := regexp.MustCompile(`n(\d+)`)
-	failRegex := regexp.MustCompile(`^F\((\d+)\)$`)
-	recoverRegex := regexp.MustCompile(`^R\((\d+)\)$`)
-
 	for {
 		record, err := reader.Read()
 		if err == io.EOF {
@@ -98,6 +106,16 @@ func parseTestCases(filePath string) (map[int]TestCase, error) {
 					}
 					currentTestCase.Transactions = append(currentTestCase.Transactions, tx)
 				}
+
+				if readOnlyRegex.MatchString(txStr){
+					matches := readOnlyRegex.FindStringSubmatch(txStr)
+
+					currentTestCase.Transactions = append(currentTestCase.Transactions, TestTransaction{
+						Sender:   matches[1],
+						Receiver: matches[1],
+						Amount:   0,
+					})
+				}
 			}
 		}
 	}
@@ -112,8 +130,9 @@ func parseTestCases(filePath string) (map[int]TestCase, error) {
 
 
 func getAllTestCases() map[int]TestCase {
-	filePath := "test2-100.csv"
+	// filePath := "test20.csv"
     // filePath := "CSE535-F25-Project-1-Testcases.csv"
+	filePath := "CSE535-F25-Project-3-Testcases.csv"
     
 	log.Printf("Parsing test cases from: %s\n", filePath)
 

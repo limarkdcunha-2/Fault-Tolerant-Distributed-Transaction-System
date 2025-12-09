@@ -24,9 +24,13 @@ import (
 type PendingRequest struct {
 	mu           sync.Mutex
 	timestamp    *timestamppb.Timestamp   
-	reply *pb.ReplyMessage    
+	reply *pb.ReplyMessage
+	isReadOnly bool    
 	done         chan struct{}               
-	completed    bool                      
+	completed    bool
+	sender string
+	receiver string 
+	amount int32                      
 }
 
 type Client struct {
@@ -44,9 +48,11 @@ type Client struct {
 	clusterInfo map[int32]*ClusterInfo
 
 	// for graceful shutdown
-	// muStop   sync.RWMutex
-    // stopChan chan struct{}
-    // stopped  bool
+	muStop   sync.RWMutex
+    stopChan chan struct{}
+    stopped  bool
+
+	replyTracker *ReplyTracker
 }
 
 
@@ -56,9 +62,9 @@ func NewClient(port int) (*Client, error) {
 		serverConns: make(map[int32]*grpc.ClientConn),
 		pendingReqs: make(map[string]*PendingRequest),
 		clusterInfo: make(map[int32]*ClusterInfo),
-		// stopChan: make(chan struct{}),
-        // stopped: false, 
-		// replyTracker: NewReplyTracker(),
+		stopChan: make(chan struct{}),
+        stopped: false, 
+		replyTracker: NewReplyTracker(),
 	}
 
 	client.buildClientClusterMap()
@@ -114,24 +120,25 @@ func (client *Client) SendTransaction(tx Transaction) string {
         Transaction: &pb.Transaction{
             Sender:   tx.Sender,
             Receiver: tx.Receiver,
-            Amount:   int32(tx.Amount),
+            Amount:   tx.Amount,
         },
         Timestamp: timestamppb.Now(),
     }
 
 	reqKey := client.getRequestKey(dataPointId,req.Timestamp)
 
+	isReadOnly := isReadOnly(req)
     // Register pending request BEFORE sending
-	pending := client.registerRequest(dataPointId,req.Timestamp,false)
+	pending := client.registerRequest(dataPointId,req.Timestamp,isReadOnly,tx.Sender,tx.Receiver,tx.Amount)
 	defer client.cleanupRequest(reqKey)
 
 	attemptCount := 0
 
 	for {
-		// if client.IsStopped() {
-        //     log.Printf("[Client] Stopping write request loop (stopped)")
-        //     return ""
-        // }
+		if client.IsStopped() {
+            log.Printf("[Client] Stopping write request loop (stopped)")
+            return ""
+        }
 
 		attemptCount++
         log.Printf("[Client] Write attempt #%d for request (%s, %s, %d)", attemptCount, 
@@ -141,7 +148,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 		
 		senderIntVal, err := strconv.Atoi(req.Transaction.Sender) 
 		if err != nil {
-			log.Printf("[Client] Failed to convert value of client sender from string to int")
+			log.Printf("[Client] Failed to convert value of client sender from string to int %v",err)
 			break
 		}
 
@@ -178,11 +185,21 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			client.updateLeaderFromReply(pending.reply)
 			pending.mu.Unlock()
 
-			log.Printf("[Client] Received result=%s for (%s, %s, %d)",
-			result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+			if req.Transaction.Sender == req.Transaction.Receiver {
+				log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
+			} else {
+				log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+				result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+			}
+			
 			
 			return result
 		}
+
+		if client.IsStopped() {
+            log.Printf("[Client] Stopping write request loop (stopped)")
+            return ""
+        }
 
 		client.broadcastToAllNodes(req,targetNodeIds)
 
@@ -192,8 +209,13 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			client.updateLeaderFromReply(pending.reply)
 			pending.mu.Unlock()
 			
-			log.Printf("[Client] Received result=%s for (%s, %s, %d)",
-			result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+			if req.Transaction.Sender == req.Transaction.Receiver {
+				log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
+			} else {
+				log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+				result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+			}
+
 			return result
 		}
 	}
@@ -261,6 +283,21 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
 	case <-pending.done:
 		pending.mu.Lock()
 		result := pending.reply.Status
+
+		var status string
+
+		if pending.isReadOnly {
+			status = fmt.Sprintf("(%s) : %s",pending.sender,pending.reply.Status)
+		} else {
+			status = fmt.Sprintf("(%s, %s, %d) : %s",pending.sender,pending.receiver,pending.amount,pending.reply.Status)
+		}
+		
+		client.replyTracker.Add(ReplyRecord{
+			Timestamp: time.Now().UnixNano(),
+			LeaderId: pending.reply.Ballot.NodeId,
+			Status: status,
+			ReqKey: makeRequestKey(pending.reply.ClientId,pending.reply.ClientRequestTimestamp),
+		})
 		pending.mu.Unlock()
 		
 		return result, true
@@ -285,16 +322,20 @@ func (client *Client) getRequestKey(dataPoint int32,timestamp *timestamppb.Times
     return fmt.Sprintf("%d-%d-%d", dataPoint, timestamp.Seconds, timestamp.Nanos)
 }
 
-func (client *Client) createPendingRequest(timestamp *timestamppb.Timestamp,isReadOnly bool) *PendingRequest {
+func (client *Client) createPendingRequest(timestamp *timestamppb.Timestamp,isReadOnly bool,sender string,receiver string,amount int32) *PendingRequest {
 	return &PendingRequest{
 		timestamp:    timestamp,
 		reply:      nil,
 		done:         make(chan struct{}),
 		completed:    false,
+		isReadOnly:isReadOnly,
+		sender: sender,
+		receiver: receiver,
+		amount: amount,
 	}
 }
 
-func (client *Client) registerRequest(datapoint int32, timestamp *timestamppb.Timestamp,isReadOnly bool) *PendingRequest {
+func (client *Client) registerRequest(datapoint int32, timestamp *timestamppb.Timestamp, isReadOnly bool,sender string,receiver string,amount int32) *PendingRequest {
 	reqKey := client.getRequestKey(datapoint,timestamp)
 	
 	client.muPending.Lock()
@@ -305,7 +346,7 @@ func (client *Client) registerRequest(datapoint int32, timestamp *timestamppb.Ti
 		return existing
 	}
 	
-	pending := client.createPendingRequest(timestamp,isReadOnly)
+	pending := client.createPendingRequest(timestamp,isReadOnly,sender,receiver,amount)
 	client.pendingReqs[reqKey] = pending
 	return pending
 }
@@ -386,6 +427,28 @@ func (client *Client) HandleReply(ctx context.Context, reply *pb.ReplyMessage) (
     
 	return &emptypb.Empty{}, nil
 }
+
+func (client *Client) IsStopped() bool {
+    client.muStop.RLock()
+    defer client.muStop.RUnlock()
+    return client.stopped
+}
+
+func (client *Client) Stop() {
+    client.muStop.Lock()
+    defer client.muStop.Unlock()
+    
+    if !client.stopped {
+        close(client.stopChan)
+        client.stopped = true
+        log.Printf("[Client] STOPPED")
+    }
+}
+
+func (client *Client) PrintReplyHistory() {
+    client.replyTracker.PrintAll()
+}
+
 
 func (client *Client) closeAllConnections() {
 	client.muConn.Lock()

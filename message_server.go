@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 	pb "transaction-processor/message"
 
@@ -30,14 +31,20 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 	node.muBallot.RLock()
 	ballot := node.promisedBallotAccept
 	leaderId := ballot.NodeId
+	roundNumber := ballot.RoundNumber
 	// log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",node.nodeId,node.promisedBallotAccept.RoundNumber,node.promisedBallotAccept.NodeId)
 	node.muBallot.RUnlock()
+
+	isReqReadOnly := isReadOnly(req)
 
 	// 1. Check if a leader exists
 	if leaderId == 0 {
 		// 1a Log the requests to be processed after leader is elected
 		// log.Printf("[Node %d] Leader doesnt exist so queuing the client request",node.nodeId)
-		
+		if isReqReadOnly{
+			return &emptypb.Empty{}, nil
+		}
+
 		node.muReqQue.Lock()
 
 		// 1b Check if already logged
@@ -66,7 +73,9 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 		return &emptypb.Empty{}, nil
 	}
 
-	if isIntraShard(req){
+	if isReqReadOnly {
+		node.handleReadOnlyRequest(req,leaderId,roundNumber)
+	} else if isIntraShard(req){
 		// log.Printf("[Node %d] INTRA SHARD flow",node.nodeId)
 
 		node.handleIntraShardRequest(req,leaderId)
@@ -76,6 +85,70 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 	}
 
 	return &emptypb.Empty{}, nil
+}
+
+func(node *Node) handleReadOnlyRequest(req *pb.ClientRequest, leaderId, roundNumber int32){
+	if node.nodeId != leaderId {
+		node.peers[leaderId].SendRequestMessage(context.Background(),req)
+		return
+	}
+
+	// reqKey := makeRequestKey(req.ClientId, req.Timestamp)
+
+	if cachedReply, exists := node.GetCachedReply(req.ClientId, req.Timestamp); exists {
+        log.Printf("[Node %d] Read-only cache hit for Client %d", node.nodeId, req.ClientId)
+        go node.sendReplyToClient(cachedReply)
+		return
+    }
+
+	datapoint := req.Transaction.Sender 
+	
+	node.muLocks.RLock()
+    isLocked := node.isLocked(datapoint)
+    node.muLocks.RUnlock()
+
+	if isLocked {
+        return
+    }
+
+	senderData, senderCloser, err := node.state.Get(accountKey(datapoint))
+
+	if err != nil {
+        if err == pebble.ErrNotFound {
+			log.Printf("[Node %d] READ ONLY datapoint %s not found",node.nodeId,datapoint)
+            return
+        }
+
+		log.Printf("[Node %d] READ ONLY Failed to read datapoint %s ",node.nodeId,datapoint)
+        return
+    }
+
+	senderBalance, err := deserializeBalance(senderData)
+    senderCloser.Close()
+
+    if err != nil {
+		log.Printf("[Node %d] READ ONLY failed to deserialize datapoint balance %v",node.nodeId,err)
+        return
+    }
+
+	result := strconv.FormatInt(int64(senderBalance), 10)
+
+	reply := &pb.ReplyMessage{
+		Ballot: &pb.BallotNumber{
+			NodeId: leaderId,
+			RoundNumber: roundNumber,
+		},
+		ClientRequestTimestamp: req.Timestamp,
+		Status: result,
+		ClientId: req.ClientId,
+	}
+
+	// Caching the read only request
+	node.muReplies.Lock()
+	node.replies[makeRequestKey(req.ClientId,reply.ClientRequestTimestamp)] = reply
+	node.muReplies.Unlock()
+
+	go node.sendReplyToClient(reply)
 }
 
 func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, leaderId int32){
@@ -2515,13 +2588,6 @@ func(node *Node) buildCrossShardQueue(highestCheckpointSeq int32){
         node.nodeId, len(crossShardTrans), highestCheckpointSeq)
 }
 
-// func(node *Node) doLocksRepairAfterNewView(highestCheckpointSeq int32){
-// 	node.muLog.RLock()
-
-// 	for seq := minSeq; seq <= maxSeq; seq++ {
-
-// 	}
-// }
 
 func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emptypb.Empty, error) {
 	if !node.isActive() {

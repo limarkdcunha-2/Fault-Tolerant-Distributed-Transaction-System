@@ -78,9 +78,9 @@ func (r *Runner) RunAllTestSets() {
     r.client.startGrpcServer()
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        // if setNum > 2 {
-        //     break
-        // }
+        if setNum != 2 {
+            continue
+        }
 
         tc := r.testCases[setNum]
         fmt.Printf("\n=========================================\n")
@@ -95,7 +95,7 @@ func (r *Runner) RunAllTestSets() {
 
         // r.CleanupStateAndWAL()
 
-        // r.UpdateActiveNodes(tc.LiveNodes)
+        r.UpdateActiveNodes(tc.LiveNodes)
 
         // Execute transactions
         start := time.Now()
@@ -123,6 +123,9 @@ func (r *Runner) ExecuteTestCase(tc TestCase) {
    for _, batch := range batches {
         if batch.isControl {
             cmd := batch.transactions[0]
+            // This delay is impt
+            time.Sleep(1 * time.Second)
+
 			if cmd.IsFailNode {
 				log.Printf("[Runner] Executing Fail Node %d...", cmd.TargetNodeId)
 				r.FailNodeCommand(int32(cmd.TargetNodeId))
@@ -205,9 +208,9 @@ func (r *Runner) showInteractiveMenu() {
         // fmt.Println("3. PrintStatus (single sequence number)")
         fmt.Println("4. PrintStatus (all sequence numbers)")
         // fmt.Println("5. PrintView")
-        // fmt.Println("6. Stop clients")
+        fmt.Println("6. Stop client retries")
         // fmt.Println("7. Stop server timers")
-        // fmt.Println("8. View client side replies")
+        fmt.Println("8. View client side replies")
         fmt.Println("9. Proceed to next batch")
         fmt.Println("========================================")
         fmt.Print("Enter choice (1-9): ")
@@ -238,12 +241,12 @@ func (r *Runner) showInteractiveMenu() {
             r.PrintStatusAll()
         // case "5":
         //     r.PrintViewForAllNodes()
-        // case "6":
-        //     r.StopAllClients()
+        case "6":
+            r.StopClient()
         // case "7":
         //     r.StopAllNodeTimers()
-        // case "8":
-        //     r.PrintClientReplyHistory()
+        case "8":
+            r.client.PrintReplyHistory()
         case "9":
             fmt.Println("\nProceeding to next batch...")
             return
@@ -292,13 +295,7 @@ func (r *Runner) UpdateActiveNodes(liveNodes []int) {
             continue
         }
 
-        if slices.Contains(liveNodes, int(cfg.NodeId)) {
-            _, err := client.RecoverNode(context.Background(),  &emptypb.Empty{})
-
-            if err != nil {
-                log.Printf("[Runner] Failed to send RECOVER signal for node %d: %v", cfg.NodeId, err)
-            }
-        } else {
+        if !slices.Contains(liveNodes, int(cfg.NodeId)) {
             _, err := client.FailNode(context.Background(),  &emptypb.Empty{})
 
             if err != nil {
@@ -350,4 +347,10 @@ func (r *Runner) PrintBalanceAll(datapoint string){
             log.Printf("[Runner] Failed to print log for node %d: %v",nodeId, err)
         }
     }
+}
+
+func (r *Runner) StopClient() {
+    log.Printf("[Runner] Stopping all clients...")
+    r.client.Stop()
+    log.Printf("[Runner] All clients stopped")
 }

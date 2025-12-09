@@ -171,6 +171,9 @@ type Node struct {
 	muFirstTimeAbortAck sync.RWMutex
 	shouldSendAckForFirstTimeAbort map[string]bool
 
+	muReadOnly sync.RWMutex
+	readOnlyMap map[string]bool
+
 	wal *WriteAheadLog
 
 	peers map[int32]pb.MessageServiceClient

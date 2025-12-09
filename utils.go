@@ -48,6 +48,47 @@ func getClusterId(id int32) int32 {
     return -1
 }
 
+func(node *Node) deepCopyBallot(b *pb.BallotNumber) *pb.BallotNumber {
+    if b == nil {
+        return &pb.BallotNumber{
+            RoundNumber: 0,
+            NodeId:      0,
+        }
+    }
+    return &pb.BallotNumber{
+        RoundNumber: b.RoundNumber,
+        NodeId:      b.NodeId,
+    }
+}
+
+func(node *Node) deepCopyRequest(r *pb.ClientRequest) *pb.ClientRequest {
+    if r == nil {
+        return nil
+    }
+    
+    // Deep copy timestamp
+    var timestampCopy *timestamppb.Timestamp
+    if r.Timestamp != nil {
+        timestampCopy = timestamppb.New(r.Timestamp.AsTime())
+    }
+    
+    // Deep copy transaction
+    var transactionCopy *pb.Transaction
+    if r.Transaction != nil {
+        transactionCopy = &pb.Transaction{
+            Sender:   r.Transaction.Sender,
+            Receiver: r.Transaction.Receiver,
+            Amount:   r.Transaction.Amount,
+        }
+    }
+    
+    return &pb.ClientRequest{
+        ClientId:    r.ClientId,
+        Timestamp:   timestampCopy,
+        Transaction: transactionCopy,
+    }
+}
+
 func (node *Node) getAllClusterNodes() []int32 {
     node.muCluster.Lock()
     defer node.muCluster.Unlock()
@@ -86,7 +127,7 @@ func (node *Node) updateLeaderIfNeededForCluster(sender string,leaderIdFromMsg i
 
 func (node *Node) isLeader() bool {
 	node.muBallot.RLock()
-	defer node.muBallot.Unlock()
+	defer node.muBallot.RUnlock()
 
 	return node.promisedBallotAccept.NodeId == node.nodeId
 }

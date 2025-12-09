@@ -278,10 +278,10 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
     entry.EntryAcceptType = pb.AcceptType_ABORT
 
 	selfAcceptedMessage := &pb.AcceptedMessage{
-        Ballot:      entry.Ballot,
+        Ballot: node.deepCopyBallot(entry.Ballot),
         SequenceNum: seq,
-        Request:     entry.Request,
-        NodeId:      node.nodeId,
+        Request: node.deepCopyRequest(entry.Request),
+        NodeId:  node.nodeId,
         AcceptType:  pb.AcceptType_ABORT,
     }
 
@@ -297,9 +297,9 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
         node.nodeId, seq)
 
 	abortAccept := &pb.AcceptMessage{
-        Ballot:      selfAcceptedMessage.Ballot,
+        Ballot: selfAcceptedMessage.Ballot,
         SequenceNum: seq,
-        Request:     selfAcceptedMessage.Request,
+        Request: selfAcceptedMessage.Request,
         AcceptType:  pb.AcceptType_ABORT,
     }
 

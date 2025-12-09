@@ -29,16 +29,15 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
         req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
 
 	node.muBallot.RLock()
-	ballot := node.promisedBallotAccept
-	leaderId := ballot.NodeId
-	roundNumber := ballot.RoundNumber
-	// log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",node.nodeId,node.promisedBallotAccept.RoundNumber,node.promisedBallotAccept.NodeId)
+	currentBallot := node.deepCopyBallot(node.promisedBallotAccept)
+	log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",
+	node.nodeId,currentBallot.RoundNumber,currentBallot.NodeId)
 	node.muBallot.RUnlock()
 
 	isReqReadOnly := isReadOnly(req)
 
 	// 1. Check if a leader exists
-	if leaderId == 0 {
+	if currentBallot.NodeId == 0 {
 		// 1a Log the requests to be processed after leader is elected
 		// log.Printf("[Node %d] Leader doesnt exist so queuing the client request",node.nodeId)
 		if isReqReadOnly{
@@ -74,22 +73,22 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 	}
 
 	if isReqReadOnly {
-		node.handleReadOnlyRequest(req,leaderId,roundNumber)
+		node.handleReadOnlyRequest(req,currentBallot)
 	} else if isIntraShard(req){
 		// log.Printf("[Node %d] INTRA SHARD flow",node.nodeId)
 
-		node.handleIntraShardRequest(req,leaderId)
+		node.handleIntraShardRequest(req,currentBallot)
 	} else {
 		// log.Printf("[Node %d] [CROSS-SHARD] flow",node.nodeId)
-		node.handleCrossShardRequest(req,ballot)
+		node.handleCrossShardRequest(req,currentBallot)
 	}
 
 	return &emptypb.Empty{}, nil
 }
 
-func(node *Node) handleReadOnlyRequest(req *pb.ClientRequest, leaderId, roundNumber int32){
-	if node.nodeId != leaderId {
-		node.peers[leaderId].SendRequestMessage(context.Background(),req)
+func(node *Node) handleReadOnlyRequest(req *pb.ClientRequest, ballot *pb.BallotNumber){
+	if node.nodeId != ballot.NodeId {
+		node.peers[ballot.NodeId].SendRequestMessage(context.Background(),req)
 		return
 	}
 
@@ -133,11 +132,9 @@ func(node *Node) handleReadOnlyRequest(req *pb.ClientRequest, leaderId, roundNum
 
 	result := strconv.FormatInt(int64(senderBalance), 10)
 
+	// This ballot is deep copy only so it wont change
 	reply := &pb.ReplyMessage{
-		Ballot: &pb.BallotNumber{
-			NodeId: leaderId,
-			RoundNumber: roundNumber,
-		},
+		Ballot: ballot,
 		ClientRequestTimestamp: req.Timestamp,
 		Status: result,
 		ClientId: req.ClientId,
@@ -151,7 +148,7 @@ func(node *Node) handleReadOnlyRequest(req *pb.ClientRequest, leaderId, roundNum
 	go node.sendReplyToClient(reply)
 }
 
-func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, leaderId int32){
+func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, ballot *pb.BallotNumber){
 	// 1. Check if already processed this request before
 	if cachedReply, exists := node.GetCachedReply(req.ClientId, req.Timestamp); exists {
 		log.Printf("[Node %d] Duplicate request from client %d (ts=%s). Returning cached reply.",
@@ -176,7 +173,7 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, leaderId int32){
     }
 
 	// 3. Reroute the request to leader
-	if node.nodeId != leaderId {
+	if node.nodeId != ballot.NodeId {
 		node.muPending.Unlock()
 
 		log.Printf("[Node %d] Not primary, routing client request to primary", node.nodeId)
@@ -186,7 +183,7 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, leaderId int32){
 			node.livenessTimer.Start()
 		}
 		
-		node.peers[leaderId].SendRequestMessage(context.Background(),req)
+		node.peers[ballot.NodeId].SendRequestMessage(context.Background(),req)
 		return
 	}
 
@@ -194,6 +191,8 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, leaderId int32){
 	// If not done this way bursts of request procesing will slow doOMMIT message build completewn the execution by a lot
 	node.pendingRequests[reqKey] = true
 	node.muPending.Unlock()
+
+	log.Printf("[Node %d] I am the LEADER WITH BALLOT(N:%d)",node.nodeId,ballot.NodeId)
 
 	// Process as leader
 	// 4. Check if data points are locked
@@ -220,7 +219,7 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, leaderId int32){
 	node.muLocks.Unlock()
 
 	// 5. After all checks are complete initiate consensus round
-	node.initiateConsensusRound(req,pb.AcceptType_INTRA_SHARD)
+	node.initiateConsensusRound(req,pb.AcceptType_INTRA_SHARD,ballot)
 }
 
 
@@ -332,7 +331,7 @@ func(node *Node) handleCrossShardRequest(req *pb.ClientRequest,ballot *pb.Ballot
 	go node.sendTwoPCPrepare(prepareMsg)
 
 	// 7. After all checks are complete initiate consensus round
-	node.initiateConsensusRound(req,pb.AcceptType_PREPARE)	
+	node.initiateConsensusRound(req,pb.AcceptType_PREPARE,ballot)	
 }
 
 func(node *Node) sendTwoPCPrepare(msg *pb.TwoPCPrepareMessage){
@@ -347,7 +346,7 @@ func(node *Node) sendTwoPCPrepare(msg *pb.TwoPCPrepareMessage){
 	}
 }
 
-func(node *Node) initiateConsensusRound(req *pb.ClientRequest, acceptType pb.AcceptType){
+func(node *Node) initiateConsensusRound(req *pb.ClientRequest, acceptType pb.AcceptType,ballot *pb.BallotNumber){
 	// 1. Assign seq number
 	node.muLog.Lock()
 	seq := node.currentSeqNo + 1
@@ -390,7 +389,7 @@ func(node *Node) initiateConsensusRound(req *pb.ClientRequest, acceptType pb.Acc
 		
 		crossShardTrans := &CrossShardTrans{
 			SequenceNum: seq,
-			Ballot: node.promisedBallotAccept,
+			Ballot: ballot,
 			Request:req,
 			Timer: reqTimer,
 			shouldKeepSendingCommmit: true,
@@ -403,7 +402,7 @@ func(node *Node) initiateConsensusRound(req *pb.ClientRequest, acceptType pb.Acc
 	}
 	
 	acceptMessage := &pb.AcceptMessage{
-		Ballot:node.promisedBallotAccept,
+		Ballot:ballot,
 		SequenceNum: seq,
 		Request:req,
 		AcceptType: acceptType,
@@ -486,10 +485,9 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 
 	// 1. If valid ballot number
 	node.muBallot.Lock()
-	promisedBallot := node.promisedBallotAccept
 	
 	// 1a. If less simply reject it
-	if node.isBallotLessThan(msg.Ballot,promisedBallot) {
+	if node.isBallotLessThan(msg.Ballot,node.promisedBallotAccept) {
 		log.Printf("[Node %d] Rejecting ACCEPT message with stale ballot number",node.nodeId)
 		
 		node.muBallot.Unlock()
@@ -500,10 +498,12 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 	isBallotGreater := false
 	// wasLeader := false
 
-	if node.isBallotGreaterThan(msg.Ballot,promisedBallot) {
+	if node.isBallotGreaterThan(msg.Ballot,node.promisedBallotAccept) {
 		isBallotGreater = true
-		node.promisedBallotAccept = msg.Ballot
+		node.promisedBallotAccept = node.deepCopyBallot(msg.Ballot)
 	}
+
+	currentBallot := node.deepCopyBallot(node.promisedBallotAccept)
 
 	node.muBallot.Unlock()
 
@@ -535,53 +535,33 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 				log.Printf("[Node %d] Seq=%d already in status %v",
 					node.nodeId, msg.SequenceNum, existingEntry.Phase)
 
-				// If ballot number is higher then overrwrite in accept log and send accepted with new ballot number
-				if isBallotGreater {
-					existingEntry.Ballot = msg.Ballot
-					existingEntry.Request = msg.Request
+				// If ballot number is higher then overrwrite in accept log and send accepted with new ballot number	
+				if node.isBallotLessThan(msg.Ballot,currentBallot){
+					existingEntry.Ballot = node.deepCopyBallot(msg.Ballot)
+					existingEntry.Request = node.deepCopyRequest(msg.Request)
+				}
 
-					acceptedMessage := &pb.AcceptedMessage{
-						Ballot: existingEntry.Ballot,
-						SequenceNum: existingEntry.SequenceNum,
-						Request: existingEntry.Request,
-						NodeId: node.nodeId,
-						AcceptType: msg.AcceptType,
-					}
+				acceptedMessage := &pb.AcceptedMessage{
+					Ballot: node.deepCopyBallot(existingEntry.Ballot),
+					SequenceNum: existingEntry.SequenceNum,
+					Request: node.deepCopyRequest(existingEntry.Request),
+					NodeId: node.nodeId,
+					AcceptType: msg.AcceptType,
+				}
 
-					existingEntry.mu.Unlock()
-					
-					node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
+				existingEntry.mu.Unlock()
 
-					// Impt: Start timer if not already running
-					if !node.livenessTimer.IsRunning(){
-						log.Printf("[Node %d] Starting liveness timer due getting accept message 1",node.nodeId)
-						node.livenessTimer.Start()
-					}
+				node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
 
-					go node.sendAcceptedMessage(acceptedMessage)
-					return &emptypb.Empty{}, nil
-				} else {
-					// Ballot number will be equal
-					acceptedMessage := &pb.AcceptedMessage{
-						Ballot: existingEntry.Ballot,
-						SequenceNum: existingEntry.SequenceNum,
-						Request: existingEntry.Request,
-						NodeId: node.nodeId,
-						AcceptType: msg.AcceptType,
-					}
-					existingEntry.mu.Unlock()
+				// Impt: Start timer if not already running
+				if !node.livenessTimer.IsRunning(){
+					log.Printf("[Node %d] Starting liveness timer due getting accept message 1",node.nodeId)
+					node.livenessTimer.Start()
+				}
 
-					node.markRequestPending(acceptedMessage.Request.ClientId, acceptedMessage.Request.Timestamp)
+				go node.sendAcceptedMessage(acceptedMessage,int32(1))
 
-					// Impt: Start timer if not already running
-					if !node.livenessTimer.IsRunning(){
-						log.Printf("[Node %d] Starting liveness timer due getting accept message 2",node.nodeId)
-						node.livenessTimer.Start()
-					}
-
-					go node.sendAcceptedMessage(acceptedMessage)
-					return &emptypb.Empty{}, nil
-				}			
+				return &emptypb.Empty{}, nil	
 			} 
 		} else if msg.AcceptType == pb.AcceptType_COMMIT || isSecondRoundAbort{
 			// This for sure we know its 2nd round
@@ -601,9 +581,9 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 					existingEntry.Request = msg.Request
 
 					acceptedMessage := &pb.AcceptedMessage{
-						Ballot: existingEntry.Ballot,
+						Ballot: node.deepCopyBallot(existingEntry.Ballot),
 						SequenceNum: existingEntry.SequenceNum,
-						Request: existingEntry.Request,
+						Request: node.deepCopyRequest(existingEntry.Request),
 						NodeId: node.nodeId,
 						AcceptType: msg.AcceptType,
 					}
@@ -618,14 +598,14 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 						node.livenessTimer.Start()
 					}
 
-					go node.sendAcceptedMessage(acceptedMessage)
+					go node.sendAcceptedMessage(acceptedMessage,int32(3))
 					return &emptypb.Empty{}, nil
 				} else {
 					// Ballot number will be equal
 					acceptedMessage := &pb.AcceptedMessage{
-						Ballot: existingEntry.Ballot,
+						Ballot: node.deepCopyBallot(existingEntry.Ballot),
 						SequenceNum: existingEntry.SequenceNum,
-						Request: existingEntry.Request,
+						Request: node.deepCopyRequest(existingEntry.Request),
 						NodeId: node.nodeId,
 						AcceptType: msg.AcceptType,
 					}
@@ -639,7 +619,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 						node.livenessTimer.Start()
 					}
 
-					go node.sendAcceptedMessage(acceptedMessage)
+					go node.sendAcceptedMessage(acceptedMessage,int32(4))
 					return &emptypb.Empty{}, nil
 				}			
 			}  
@@ -648,16 +628,16 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 			existingEntry.TwoPCPhase = PhaseAccepted
 			
 			acceptedMessage := &pb.AcceptedMessage{
-				Ballot: existingEntry.Ballot,
+				Ballot: node.deepCopyBallot(existingEntry.Ballot),
 				SequenceNum: existingEntry.SequenceNum,
-				Request: existingEntry.Request,
+				Request: node.deepCopyRequest(existingEntry.Request),
 				NodeId: node.nodeId,
 				AcceptType: msg.AcceptType,
 			}
 			
 			existingEntry.mu.Unlock()
 
-			go node.sendAcceptedMessage(acceptedMessage)
+			go node.sendAcceptedMessage(acceptedMessage,int32(5))
 			
 			// Mark as pending and start the timer as we will wait for corresponding COMMIT for this accept
 			node.markRequestPending(acceptedMessage.Request.ClientId, acceptedMessage.Request.Timestamp)
@@ -742,16 +722,16 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 	node.muLocks.Unlock()
 
 	acceptedMessage := &pb.AcceptedMessage{
-		Ballot: msg.Ballot,
+		Ballot: node.deepCopyBallot(msg.Ballot),
 		SequenceNum: msg.SequenceNum,
-		Request: msg.Request,
+		Request: node.deepCopyRequest(msg.Request),
 		NodeId: node.nodeId,
 		AcceptType: msg.AcceptType,
 	}
 	
 	node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
 
-	go node.sendAcceptedMessage(acceptedMessage)
+	go node.sendAcceptedMessage(acceptedMessage,int32(6))
 
 	// Impt: Start timer if not already running
 	if !node.livenessTimer.IsRunning(){
@@ -762,11 +742,17 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 	return &emptypb.Empty{}, nil
 }
 
-func(node *Node) sendAcceptedMessage(msg *pb.AcceptedMessage){
+func(node *Node) sendAcceptedMessage(msg *pb.AcceptedMessage,src int32){
 	targetId := msg.Ballot.NodeId
 	
-	log.Printf("[Node %d] Sending ACCEPTED(%s) for Ballot (R:%d,N:%d) to node=%d",node.nodeId,
-	msg.AcceptType,msg.Ballot.RoundNumber,msg.Ballot.NodeId,targetId)
+	log.Printf("[Node %d] Sending ACCEPTED(%s) seq=%d for Ballot (R:%d,N:%d) to node=%d from src=%d",node.nodeId,
+	msg.AcceptType,msg.SequenceNum,msg.Ballot.RoundNumber,msg.Ballot.NodeId,targetId,src)
+
+	// if node.nodeId == targetId {
+	// 	log.Printf("[Node %d] CRITICAL skipping ACCEPTED(%s) seq=%d for Ballot (R:%d,N:%d) to node=%d from src=%d",node.nodeId,
+	// 	msg.AcceptType,msg.SequenceNum,msg.Ballot.RoundNumber,msg.Ballot.NodeId,targetId,src)
+	// 	return
+	// }
 
 	_, err := node.peers[targetId].HandleAccepted(context.Background(),msg)
 
@@ -784,6 +770,13 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	log.Printf("[Node %d] Received ACCEPTED(%s) for  Seq=%d  | from Node %d | ballot round=%d",
 		node.nodeId,msg.AcceptType,msg.SequenceNum,msg.NodeId, msg.Ballot.RoundNumber)
+
+	if !node.isLeader() {
+		log.Printf("[Node %d] Rejecting ACCEPTED(%s) for  Seq=%d  | from Node %d | Ballot (R:%d,N:%d)",
+		node.nodeId,msg.AcceptType,msg.SequenceNum,msg.NodeId, msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+
+		return &emptypb.Empty{}, nil
+	}
 
 	node.muLog.Lock()
 
@@ -844,9 +837,9 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 				entry.EntryAcceptType = msg.AcceptType
 				
 				commitMsg := &pb.CommitMessage{
-					Ballot: entry.Ballot,
+					Ballot: node.deepCopyBallot(entry.Ballot),
 					SequenceNum: entry.SequenceNum,
-					Request: entry.Request,
+					Request: node.deepCopyRequest(entry.Request),
 					AcceptType: entry.EntryAcceptType,
 				}
 
@@ -1022,9 +1015,9 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 		log.Printf("[Node %d] Seq=%d is now in phase=%d",node.nodeId,entry.SequenceNum,entry.Phase)
 		
 		commitMsg := &pb.CommitMessage{
-			Ballot: entry.Ballot,
+			Ballot: node.deepCopyBallot(entry.Ballot),
 			SequenceNum: entry.SequenceNum,
-			Request: entry.Request,
+			Request: node.deepCopyRequest(entry.Request),
 			AcceptType: entry.EntryAcceptType,
 		}
 		log.Printf("[Node %d] Seq=%d COMMIT message build complete",node.nodeId,entry.SequenceNum)
@@ -1165,7 +1158,7 @@ func(node *Node) HandleCommit(ctx context.Context,msg *pb.CommitMessage) (*empty
 
 	// 1. Check for valid ballot number
 	node.muBallot.RLock()
-	selfBallot := node.promisedBallotAccept
+	selfBallot := node.deepCopyBallot(node.promisedBallotAccept)
 	node.muBallot.RUnlock()
 
 	if node.isBallotLessThan(msg.Ballot,selfBallot) {
@@ -1430,19 +1423,8 @@ func (node *Node) executeInOrder(isLeader bool) {
 
 		currentPhase := entry.Phase
 		currentAcceptType := entry.EntryAcceptType
-		currentRequest := &pb.ClientRequest{
-			Timestamp: entry.Request.Timestamp,
-			ClientId: entry.Request.ClientId,
-			Transaction: &pb.Transaction{
-				Sender: entry.Request.Transaction.Sender,
-				Receiver: entry.Request.Transaction.Receiver,
-				Amount: entry.Request.Transaction.Amount,
-			},
-		}
-		currentBallot := &pb.BallotNumber{
-			NodeId: entry.Ballot.NodeId,
-			RoundNumber: entry.Ballot.RoundNumber,
-		}
+		currentRequest := node.deepCopyRequest(entry.Request)
+		currentBallot := node.deepCopyBallot(entry.Ballot)
 
 		entry.mu.RUnlock()
 	
@@ -1532,51 +1514,51 @@ func (node *Node) executeInOrder(isLeader bool) {
 					},
 				}
 
-				// TO DO update this
+				// TO DO IMPT update this for hanlding cross shard flow
 				// Check if we should create a checkpoint
-				// if (nextSeq) % node.checkpointInterval == 0 {
-				// 	log.Printf("[Node %d] Seq=%d satifies checkpointing interval",node.nodeId,nextSeq)
+				if (nextSeq) % node.checkpointInterval == 0 {
+					log.Printf("[Node %d] Seq=%d satifies checkpointing interval",node.nodeId,nextSeq)
 				
-				// 	node.muCheckpoint.Lock()
-				// 	// Storing last stable state snapshot to send during catchup request
-				// 	if node.lastStableSnapshot != nil {
-				// 		node.lastStableSnapshot.Close()
-				// 	}
-				// 	node.lastStableSnapshot = node.state.NewSnapshot()
-				// 	log.Printf("[Node %d] Seq=%d snapshot installation complete",node.nodeId,nextSeq)
+					node.muCheckpoint.Lock()
+					// Storing last stable state snapshot to send during catchup request
+					if node.lastStableSnapshot != nil {
+						node.lastStableSnapshot.Close()
+					}
+					node.lastStableSnapshot = node.state.NewSnapshot()
+					log.Printf("[Node %d] Seq=%d snapshot installation complete",node.nodeId,nextSeq)
 
-				// 	if isLeader {
-				// 		stateDigest,err := node.computeStateDigest()
+					if isLeader {
+						stateDigest,err := node.computeStateDigest()
 
-				// 		if err != nil {
-				// 			log.Printf("[Node %d] CRITICAL Error in computing state digest for seq=%d",node.nodeId,nextSeq)
-				// 			node.muCheckpoint.Unlock()
+						if err != nil {
+							log.Printf("[Node %d] CRITICAL Error in computing state digest for seq=%d",node.nodeId,nextSeq)
+							node.muCheckpoint.Unlock()
 
-				// 			continue
-				// 		}
+							continue
+						}
 
-				// 		log.Printf("[Node %d] Seq=%d state digest computation complete",node.nodeId,nextSeq)
+						log.Printf("[Node %d] Seq=%d state digest computation complete",node.nodeId,nextSeq)
 
-				// 		msg := &pb.CheckpointMessage{
-				// 			SequenceNum: nextSeq,
-				// 			Digest: stateDigest,
-				// 			NodeId: node.nodeId,
-				// 		}
+						msg := &pb.CheckpointMessage{
+							SequenceNum: nextSeq,
+							Digest: stateDigest,
+							NodeId: node.nodeId,
+						}
 						
-				// 		// Log highest checkpointing message
-				// 		node.latestCheckpointMessage = msg
-				// 		log.Printf("[Node %d] Seq=%d latest checkpoint message updated",node.nodeId,nextSeq)
+						// Log highest checkpointing message
+						node.latestCheckpointMessage = msg
+						log.Printf("[Node %d] Seq=%d latest checkpoint message updated",node.nodeId,nextSeq)
 
-				// 		go node.broadcastCheckpointMessage(msg)
-				// 	}
+						go node.broadcastCheckpointMessage(msg)
+					}
 					
-				// 	// Spawning this in go rotuntine here seems little risky
-				// 	// But since this is for past sequece numbers dont think there should be an issue
-				// 	// Since only checkpointing activity will be present for these sequence numbers
-				// 	go node.garbageCollectBeforeCheckpoint(nextSeq)
+					// Spawning this in go rotuntine here seems little risky
+					// But since this is for past sequece numbers dont think there should be an issue
+					// Since only checkpointing activity will be present for these sequence numbers
+					go node.garbageCollectBeforeCheckpoint(nextSeq)
 
-				// 	node.muCheckpoint.Unlock()
-				// }
+					node.muCheckpoint.Unlock()
+				}
 
 				log.Printf("[Node %d] Executing seq=%d checking for intra or cross shard",node.nodeId,nextSeq)
 				if isCrossShard {
@@ -1694,7 +1676,7 @@ func (node *Node) HandlePrepare(ctx context.Context, msg *pb.PrepareMessage) (*e
 
 	// 1. Check if prepare with valid ballot number
 	node.muBallot.RLock()
-	selfBallot := node.promisedBallotPrepare
+	selfBallot := node.deepCopyBallot(node.promisedBallotPrepare)
 	node.muBallot.RUnlock()
 
 	if node.isBallotLessThan(msg.Ballot,selfBallot){
@@ -1727,7 +1709,7 @@ func (node *Node) HandlePrepare(ctx context.Context, msg *pb.PrepareMessage) (*e
 		log.Printf("[Node %d] Latest received PREPARE ballot is higher than logged ones",node.nodeId)
 
 		node.muBallot.Lock()
-		node.promisedBallotPrepare = msg.Ballot
+		node.promisedBallotPrepare = node.deepCopyBallot(msg.Ballot)
 		node.muBallot.Unlock()
 		
 		// 4. Build send promise message
@@ -1774,9 +1756,9 @@ func (node *Node) getAcceptedLogForPromise(checkpointSeq int32) []*pb.AcceptedMe
 	log.Printf("[Node %d] Building accept log for promise message",node.nodeId)
     for _, entry := range node.acceptLog {
 		entry.mu.RLock()
-		Ballot := entry.Ballot
+		Ballot := node.deepCopyBallot(entry.Ballot)
 		SequenceNum:= entry.SequenceNum
-		Request := entry.Request
+		Request := node.deepCopyRequest(entry.Request)
 		Phase := entry.Phase
 		AcceptType := entry.EntryAcceptType
 		entry.mu.RUnlock()
@@ -1831,7 +1813,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 
 	// 1. Valid ballot check
 	node.muBallot.RLock()
-	selfBallot := node.promisedBallotPrepare
+	selfBallot := node.deepCopyBallot(node.promisedBallotPrepare)
 	node.muBallot.RUnlock()
 
 	if !node.isBallotEqual(msg.Ballot,selfBallot){
@@ -1874,14 +1856,14 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 		// The minSeq from this output will the highest checkpoint seq from the promise quorum
 		log.Printf("[Node %d] Building MERGED log for NEW-VIEW",node.nodeId)
 		mergedLog,minSeq,maxSeq,maxCheckpointNodeId := node.buildMergedAcceptLog()
-		log.Printf("[Node %d] Building MERGED log for NEW-VIE COMPLETE",node.nodeId)
+		log.Printf("[Node %d] Building MERGED log for NEW-VIEW COMPLETE",node.nodeId)
 
 		node.muProLog.Unlock()
 
 		// 4b. Update self ballot number
 		node.muBallot.Lock()
 		// node.promisedBallotPrepare = msg.Ballot
-		node.promisedBallotAccept = msg.Ballot
+		node.promisedBallotAccept = node.deepCopyBallot(msg.Ballot)
 		node.muBallot.Unlock()
 
 		// 4c. Updated election state pointers
@@ -1957,6 +1939,10 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 
 // Lock for promise log has been held in parent
 func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32,int32) {
+	node.muBallot.RLock()
+	selfBallot := node.deepCopyBallot(node.promisedBallotPrepare)
+	node.muBallot.RUnlock()
+
 	// 1. Intializing minS and maxS
 	var maxCheckpointSeq int32 = 0
 	var maxCheckpointNodeId int32 = 0
@@ -2002,7 +1988,7 @@ func(node *Node) buildMergedAcceptLog() ([]*pb.AcceptedMessage,int32,int32,int32
         if !exists {
             noopAccepted := &pb.AcceptedMessage{
                 SequenceNum: seq,
-                Ballot:      node.promisedBallotPrepare,
+                Ballot: selfBallot,      
                 Request: &pb.ClientRequest{
 					ClientId: -1,
                     Transaction: &pb.Transaction{
@@ -2194,7 +2180,7 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 			
 			if isLeader {
 				selfAcceptedMessage := &pb.AcceptedMessage{
-					Ballot: entry.Ballot,
+					Ballot: node.deepCopyBallot(entry.Ballot),
 					SequenceNum: seq,
 					Request: acceptedMsg.Request,
 					NodeId: node.nodeId,
@@ -2232,7 +2218,7 @@ func (node *Node) installMergedAcceptLog(mergedLog []*pb.AcceptedMessage,winning
 		receiver := entry.Request.Transaction.Receiver
 		entry.mu.RUnlock()
 
-		log.Printf("[Node %d] Attempting delete at seq=%d",node.nodeId,seq)
+		// log.Printf("[Node %d] Attempting delete at seq=%d",node.nodeId,seq)
 		
 		if seq > maxSeq {
 
@@ -2452,7 +2438,7 @@ func(node *Node) drainQueuedRequests(ballot *pb.BallotNumber){
 
     for _, req := range queued {
 		if isIntraShard(req) {
-			go node.handleIntraShardRequest(req, ballot.NodeId)
+			go node.handleIntraShardRequest(req, ballot)
 		} else {
 			go node.handleCrossShardRequest(req,ballot)
 		}
@@ -2488,11 +2474,11 @@ func(node *Node) drainQueuedTwoPCPreparesAndAborts(ballot *pb.BallotNumber){
 			continue
 		}
 
-		go node.handleTwoPCPrepareAfterLeaderPresent(prepareMsg,ballot.NodeId)
+		go node.handleTwoPCPrepareAfterLeaderPresent(prepareMsg,ballot)
 	}
 	
 	for _, abortMsg := range queuedAborts {
-		go node.handleTwoPcAbortAfterLeaderPresentInParticipantCluster(abortMsg,ballot.NodeId)
+		go node.handleTwoPcAbortAfterLeaderPresentInParticipantCluster(abortMsg,ballot)
 	}
 
 	log.Printf("[Node %d] Draining of queued 2PC PREPARE and ABORT complete",node.nodeId)
@@ -2632,8 +2618,8 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 
 	// 3. Update the ballot and the flags
 	node.muBallot.Lock()
-	node.promisedBallotAccept = msg.Ballot
-	node.promisedBallotPrepare = msg.Ballot
+	node.promisedBallotAccept = node.deepCopyBallot(msg.Ballot)
+	node.promisedBallotPrepare =node.deepCopyBallot(msg.Ballot)
 	node.muBallot.Unlock()
 
 	node.muLeader.Lock()
@@ -2666,7 +2652,9 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 	// 5. Install log
 	pendingAbortActions:= node.installMergedAcceptLog(msg.AcceptLog,msg.Ballot,msg.MinSeq,msg.MaxSeq,false)
 
+	log.Printf("[Node %d] Performing abort actions start (backup) ",node.nodeId)
 	node.performNeededAbortsAndRepairLocks(pendingAbortActions)
+	log.Printf("[Node %d] Performing abort actions complete (backup) ",node.nodeId)
 
 	// 6. Build pending queue from new log
 	node.buildPendingRequestsQueue(highestCheckpointSeq)
@@ -2713,32 +2701,57 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 
 func(node *Node) sendBackAcceptedForEntireMergedLog(msg *pb.NewViewMessage,highestCheckpointSeq int32){
 	log.Printf("[Node %d] Sending ACCEPTED (entire ballot) back for ballot(R:%d,N:%d)",node.nodeId,msg.Ballot.RoundNumber,msg.Ballot.NodeId)
+	
+	node.muBallot.RLock()
+    currentBallot := node.deepCopyBallot(node.promisedBallotAccept)
+    isLeader := node.nodeId == currentBallot.NodeId
+    node.muBallot.RUnlock()
+
+	if node.isBallotLessThan(msg.Ballot, currentBallot) {
+        log.Printf("[Node %d] ABORT: NEW-VIEW ballot (R:%d,N:%d) < promised (R:%d,N:%d)",
+            node.nodeId, msg.Ballot.RoundNumber, msg.Ballot.NodeId,
+            currentBallot.RoundNumber, currentBallot.NodeId)
+        return
+    }
+
+	if isLeader && node.isBallotGreaterThan(currentBallot, msg.Ballot) {
+        log.Printf("[Node %d] ABORT: I'm leader with ballot (R:%d,N:%d) > NEW-VIEW (R:%d,N:%d)",
+            node.nodeId, currentBallot.RoundNumber, currentBallot.NodeId,
+            msg.Ballot.RoundNumber, msg.Ballot.NodeId)
+        return
+    }
+
 	node.muLog.RLock()
 	defer node.muLog.RUnlock()
 
 	for _, entry := range node.acceptLog {
-		entry.mu.Lock()
+		entry.mu.RLock()
 		
-		Ballot := entry.Ballot
+		entryBallot := node.deepCopyBallot(entry.Ballot)
 		SequenceNum := entry.SequenceNum
-		Request := entry.Request
+		Request := node.deepCopyRequest(entry.Request)
 		AcceptType := entry.EntryAcceptType
-		entry.mu.Unlock()
+		entry.mu.RUnlock()
 
 		// No need to send accepted for already checkpointed seq numbers
 		if SequenceNum <= highestCheckpointSeq{
 			continue
 		}
 
+		if node.isBallotLessThan(msg.Ballot,entryBallot) {
+			log.Printf("[Node %d] Rejecting sending accepted for seq=%d (entire merged log) due to new leader being detected",node.nodeId,SequenceNum)
+			continue
+		}
+
 		acceptedMsg := &pb.AcceptedMessage{
-			Ballot:      Ballot,     
+			Ballot:      msg.Ballot,     
 			SequenceNum: SequenceNum,
 			Request:     Request,  
 			NodeId:      node.nodeId,
 			AcceptType: AcceptType,
 		}
 
-		go node.sendAcceptedMessage(acceptedMsg)
+		go node.sendAcceptedMessage(acceptedMsg,int32(7))
 	}
 }
 
@@ -2991,13 +3004,12 @@ func(node *Node) HandleTwoPCPrepare(ctx context.Context,msg *pb.TwoPCPrepareMess
 	node.updateLeaderIfNeededForCluster(msg.Request.Transaction.Sender,msg.NodeId)
 
 	node.muBallot.RLock()
-	ballot := node.promisedBallotAccept
-	leaderId := ballot.NodeId
+	ballot := node.deepCopyBallot(node.promisedBallotAccept)
 	// log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",node.nodeId,node.promisedBallotAccept.RoundNumber,node.promisedBallotAccept.NodeId)
 	node.muBallot.RUnlock()
 
 	// 1. Check if a leader exists
-	if leaderId == 0 {
+	if ballot.NodeId == 0 {
 		// 1a Log the prepare messages to be processed after leader is elected
 		node.muTwoPcPrepareQueue.Lock()
 
@@ -3027,12 +3039,12 @@ func(node *Node) HandleTwoPCPrepare(ctx context.Context,msg *pb.TwoPCPrepareMess
 		return &emptypb.Empty{},nil
 	}
 
-	node.handleTwoPCPrepareAfterLeaderPresent(msg,leaderId)
+	node.handleTwoPCPrepareAfterLeaderPresent(msg,ballot)
 
 	return &emptypb.Empty{},nil
 }
 
-func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessage, leaderId int32){
+func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessage, ballot *pb.BallotNumber){
 	reqKey := makeRequestKey(msg.Request.ClientId, msg.Request.Timestamp)
 
 	// This will be needed in leader failure scenario for coorindator cluster
@@ -3072,7 +3084,7 @@ func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessa
     }
 
 	// 2. If you are not the leader forward the PREPARE to leader
-	if node.nodeId != leaderId {
+	if node.nodeId != ballot.NodeId {
 		node.muPending.Unlock()
 
 		if !node.livenessTimer.IsRunning() {
@@ -3081,7 +3093,7 @@ func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessa
 		}
 
 		log.Printf("[Node %d] Not primary, routing 2PC PREPARE to primary", node.nodeId)
-		node.peers[leaderId].HandleTwoPCPrepare(context.Background(),msg)
+		node.peers[ballot.NodeId].HandleTwoPCPrepare(context.Background(),msg)
 
 		return
 	}
@@ -3094,7 +3106,7 @@ func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessa
 		node.muPending.Unlock()
 
 		log.Printf("[Node %d] Running ABORT consensus as lock is already occupied for datapoint=%s",node.nodeId,msg.Request.Transaction.Receiver)
-		node.initiateConsensusRound(msg.Request,pb.AcceptType_ABORT)
+		node.initiateConsensusRound(msg.Request,pb.AcceptType_ABORT,ballot)
 	} else {
 		log.Printf("[Node %d] 2PC PREPARE Acquiring locks on data point (%s)",
 		node.nodeId,msg.Request.Transaction.Receiver)
@@ -3105,7 +3117,7 @@ func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessa
 		node.pendingRequests[reqKey] = true
 		node.muPending.Unlock()
 		
-		node.initiateConsensusRound(msg.Request,pb.AcceptType_PREPARE)
+		node.initiateConsensusRound(msg.Request,pb.AcceptType_PREPARE,ballot)
 	}
 }
 
@@ -3182,9 +3194,9 @@ func(node *Node) HandleTwoPCPrepared(ctx context.Context,msg *pb.TwoPCPreparedMe
 		existingEntry.EntryAcceptType = pb.AcceptType_COMMIT
 		
 		selfAcceptedMessage := &pb.AcceptedMessage{
-			Ballot: existingEntry.Ballot,
+			Ballot: node.deepCopyBallot(existingEntry.Ballot),
 			SequenceNum: existingEntry.SequenceNum,
-			Request: existingEntry.Request,
+			Request: node.deepCopyRequest(existingEntry.Request),
 			NodeId: node.nodeId,
 			AcceptType: pb.AcceptType_COMMIT,
 		}
@@ -3349,9 +3361,9 @@ func(node *Node) HandleTwoPCCommit(ctx context.Context, msg *pb.TwoPCCommitMessa
 		existingEntry.TwoPCAcceptCount = 1
 
 		updatedAcceptMessage := &pb.AcceptMessage{
-			Ballot: existingEntry.Ballot,
+			Ballot: node.deepCopyBallot(existingEntry.Ballot),
 			SequenceNum: existingEntry.SequenceNum,
-			Request: existingEntry.Request,
+			Request: node.deepCopyRequest(existingEntry.Request),
 			AcceptType: existingEntry.EntryAcceptType,
 		}
 
@@ -3470,9 +3482,9 @@ func (node *Node) HandleTwoPCAbortAsCoordinator(ctx context.Context, msg *pb.Two
     }
 
 	selfAcceptedMessage := &pb.AcceptedMessage{
-        Ballot:      entry.Ballot,
+        Ballot:      node.deepCopyBallot(entry.Ballot),
         SequenceNum: seq,
-        Request:     msg.Request,
+        Request:     node.deepCopyRequest(msg.Request),
         NodeId:      node.nodeId,
         AcceptType:  pb.AcceptType_ABORT,
     }
@@ -3535,7 +3547,8 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 
 	// 1. Route abort to primary of cluster
 	node.muBallot.RLock()
-    leaderId := node.promisedBallotAccept.NodeId
+    ballot := node.deepCopyBallot(node.promisedBallotAccept)
+	leaderId := ballot.NodeId
     node.muBallot.RUnlock()
 
 	if leaderId == 0 {
@@ -3568,12 +3581,13 @@ func (node *Node) HandleTwoPCAbortAsParticipant(ctx context.Context, msg *pb.Two
 		return &emptypb.Empty{},nil
 	}
 
-    node.handleTwoPcAbortAfterLeaderPresentInParticipantCluster(msg,leaderId)
+    node.handleTwoPcAbortAfterLeaderPresentInParticipantCluster(msg,ballot)
 	
 	return &emptypb.Empty{},nil
 }
 
-func(node *Node) handleTwoPcAbortAfterLeaderPresentInParticipantCluster( msg *pb.TwoPCAbortMessage, leaderId int32) {
+func(node *Node) handleTwoPcAbortAfterLeaderPresentInParticipantCluster( msg *pb.TwoPCAbortMessage, ballot *pb.BallotNumber) {
+	leaderId := ballot.NodeId
 	if leaderId != node.nodeId {
         log.Printf("[Node %d] Routing 2PC ABORT to leader %d", node.nodeId, leaderId)
 
@@ -3627,7 +3641,7 @@ func(node *Node) handleTwoPcAbortAfterLeaderPresentInParticipantCluster( msg *pb
 		node.muFirstTimeAbortAck.Unlock()
 	
 		// 2. Runnning as multi paxos for replication
-		node.initiateConsensusRound(msg.Request,pb.AcceptType_ABORT)
+		node.initiateConsensusRound(msg.Request,pb.AcceptType_ABORT,ballot)
 		
         return
     }
@@ -3666,20 +3680,9 @@ func(node *Node) handleTwoPcAbortAfterLeaderPresentInParticipantCluster( msg *pb
 
 		
 		selfAcceptedMessage := &pb.AcceptedMessage{
-			Ballot: &pb.BallotNumber{
-				NodeId: existingEntry.Ballot.NodeId,
-				RoundNumber: existingEntry.Ballot.RoundNumber,
-			},
+			Ballot: node.deepCopyBallot(existingEntry.Ballot),
 			SequenceNum: existingEntry.SequenceNum,
-			Request: &pb.ClientRequest{
-				Timestamp: existingEntry.Request.Timestamp,
-				Transaction: &pb.Transaction{
-					Sender: existingEntry.Request.Transaction.Sender,
-					Receiver: existingEntry.Request.Transaction.Receiver,
-					Amount: existingEntry.Request.Transaction.Amount,
-				},
-				ClientId: existingEntry.Request.ClientId,
-			},
+			Request: node.deepCopyRequest(existingEntry.Request),
 			NodeId: node.nodeId,
 			AcceptType: pb.AcceptType_ABORT,
 		}

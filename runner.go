@@ -39,7 +39,6 @@ func NewRunner() *Runner {
 	runner:= &Runner{
         nodeConfigs: getNodeCluster(),
         nodeClients: make(map[int32]pb.MessageServiceClient),
-        // localClients: make(map[string]*Client),
 	}
 
     for _, nodeConfig := range runner.nodeConfigs {
@@ -76,9 +75,11 @@ func (r *Runner) RunAllTestSets() {
     // 1. Build client
     r.client,_ = NewClient(9000)
     r.client.startGrpcServer()
+
+    reader := bufio.NewReader(os.Stdin)
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        if setNum != 2 {
+        if setNum != 1 {
             continue
         }
 
@@ -87,11 +88,22 @@ func (r *Runner) RunAllTestSets() {
         fmt.Printf("[Runner] Running Set %d — live nodes %v\n", tc.SetNumber, tc.LiveNodes)
         fmt.Printf("=========================================\n")
 
-        // Reset last set before new one starts
-        // if setNum > 1 {
-        //     r.CleanupAfterSet()
-        //     r.ResetAllClients(r.localClients)
-        // }
+        fmt.Print("\nUse benchmark workload instead of CSV? (y/n): ")
+        choice, _ := reader.ReadString('\n')
+        choice = strings.TrimSpace(strings.ToLower(choice))
+
+        var transactions []Transaction
+
+        if choice == "y" || choice == "yes" {
+            // Generate benchmark workload
+            transactions = r.GenerateBenchmarkWorkload(reader)
+            if transactions == nil {
+                fmt.Println("Failed to generate benchmark, skipping test set.")
+                continue
+            }
+
+            tc.Transactions = r.convertToTestTransactions(transactions)
+        }
 
         // r.CleanupStateAndWAL()
 
@@ -99,7 +111,6 @@ func (r *Runner) RunAllTestSets() {
 
         // Execute transactions
         start := time.Now()
-        // need to spawn this in go routine
         r.ExecuteTestCase(tc)
         end := time.Since(start)
         log.Printf("[Runner] Total time elapsed %v",end)
@@ -111,7 +122,9 @@ func (r *Runner) RunAllTestSets() {
     log.Printf("All test sets complete")
 
     // Client connection cleanup
-    r.client.closeAllConnections()
+    if r.client != nil {
+        r.client.closeAllConnections()
+    }
     log.Println("[Runner] All sets complete.")
 }
 
@@ -194,7 +207,85 @@ func (r *Runner) splitTransactionsIntoBatches(transactions []TestTransaction) []
     return batches
 }
 
+func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
+    fmt.Println("\n╔════════════════════════════════════════╗")
+    fmt.Println("║     BENCHMARK CONFIGURATION            ║")
+    fmt.Println("╚════════════════════════════════════════╝")
 
+    // Number of transactions
+    fmt.Print("Number of transactions: ")
+    numTxnsStr, _ := reader.ReadString('\n')
+    numTxns, err := strconv.Atoi(strings.TrimSpace(numTxnsStr))
+    if err != nil || numTxns <= 0 {
+        fmt.Println("Invalid input, using default: 100")
+        numTxns = 100
+    }
+
+    // Read percentage
+    fmt.Print("Read percentage (0.0-1.0, e.g., 0.5 for 50%): ")
+    readPctStr, _ := reader.ReadString('\n')
+    readPct, err := strconv.ParseFloat(strings.TrimSpace(readPctStr), 64)
+    if err != nil || readPct < 0 || readPct > 1 {
+        fmt.Println("Invalid input, using default: 0.3")
+        readPct = 0.3
+    }
+
+    // Intra-shard percentage
+    fmt.Print("Intra-shard percentage (0.0-1.0, e.g., 0.7 for 70%): ")
+    intraPctStr, _ := reader.ReadString('\n')
+    intraPct, err := strconv.ParseFloat(strings.TrimSpace(intraPctStr), 64)
+    if err != nil || intraPct < 0 || intraPct > 1 {
+        fmt.Println("Invalid input, using default: 0.7")
+        intraPct = 0.7
+    }
+
+    // Skew
+    fmt.Print("Data skew (0.0=uniform, 0.99=highly skewed): ")
+    skewStr, _ := reader.ReadString('\n')
+    skew, err := strconv.ParseFloat(strings.TrimSpace(skewStr), 64)
+    if err != nil || skew < 0 || skew > 1 {
+        fmt.Println("Invalid input, using default: 0.0")
+        skew = 0.0
+    }
+
+    numClusters := int32(3) // default
+    totalAccounts := int32(9000)
+
+    benchConfig := BenchmarkConfig{
+        NumAccounts:     totalAccounts,
+        NumClusters:     numClusters,
+        NumTransactions: numTxns,
+        ReadPct:         readPct,
+        IntraPct:        intraPct,
+        Skew:            skew,
+    }
+
+    fmt.Printf("\n✓ Generating %d transactions...\n", numTxns)
+    bench := NewBenchmark(benchConfig)
+    txns := bench.GenerateWorkload()
+
+    fmt.Printf("✓ Workload: %.0f%% reads, %.0f%% intra-shard, skew=%.2f\n",
+        readPct*100, intraPct*100, skew)
+
+    return txns
+}
+
+func (r *Runner) convertToTestTransactions(txns []Transaction) []TestTransaction {
+    testTxns := make([]TestTransaction, len(txns))
+    
+    for i, tx := range txns {
+        testTxns[i] = TestTransaction{
+            Sender:        tx.Sender,
+            Receiver:      tx.Receiver,
+            Amount:        int(tx.Amount),
+            IsFailNode:    false,
+            IsRecoverNode: false,
+            TargetNodeId:  0,
+        }
+    }
+    
+    return testTxns
+}
 
 func (r *Runner) showInteractiveMenu() {
     reader := bufio.NewReader(os.Stdin)

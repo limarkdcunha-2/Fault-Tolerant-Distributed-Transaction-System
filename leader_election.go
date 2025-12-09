@@ -41,10 +41,9 @@ func(node *Node) onLivenessTimerExpired(){
 	if isPrepareLogNotEmpty {
 		log.Printf("[Node %d] Processing loggged PREPAREs",node.nodeId)
 		node.muBallot.Lock()
-		selfBallot := node.promisedBallotPrepare
 
 		// 2b Check if the highest ballot prepare is still the highest
-		if !node.isBallotGreaterThan(hightesBallotPrepare.Ballot,selfBallot) {
+		if !node.isBallotGreaterThan(hightesBallotPrepare.Ballot,node.promisedBallotPrepare) {
 			log.Printf("[Node %d] Logged PREPAPRE is not the highest",node.nodeId)
 			node.muBallot.Unlock()
 			return
@@ -53,7 +52,7 @@ func(node *Node) onLivenessTimerExpired(){
 		log.Printf("[Node %d] Logged PREPAPRE is the highest",node.nodeId)
 		// 2c If this logged prepare is with highest ballot then update self ballot
 		// And send Promise message
-		node.promisedBallotPrepare = hightesBallotPrepare.Ballot
+		node.promisedBallotPrepare = node.deepCopyBallot(hightesBallotPrepare.Ballot)
 		node.muBallot.Unlock()
 
 		node.buildAndSendPromise(hightesBallotPrepare.Ballot)

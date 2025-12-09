@@ -1582,11 +1582,12 @@ func (node *Node) executeInOrder(isLeader bool) {
 							node.muPendingAckReplies.Lock()
 							node.pendingAckReplies[reqKey] = reply
 							node.muPendingAckReplies.Unlock()
-						} else {
-							if isLeader {
-								go node.sendReplyToClient(reply)
-							}
-						}	
+						} 
+						// else {
+						// 	if isLeader {
+						// 		go node.sendReplyToClient(reply)
+						// 	}
+						// }	
 
 						
 					} else {
@@ -3077,7 +3078,7 @@ func (node *Node) handleTwoPCPrepareAfterLeaderPresent(msg *pb.TwoPCPrepareMessa
 	// 3. Process as leader of participant cluster
 	node.muLocks.Lock()
 
-	if !node.isLocked(msg.Request.Transaction.Receiver) {
+	if node.isLocked(msg.Request.Transaction.Receiver) {
 		node.muLocks.Unlock()
 		node.muPending.Unlock()
 
@@ -3498,7 +3499,7 @@ func (node *Node) HandleTwoPCAbortAsCoordinator(ctx context.Context, msg *pb.Two
 		},
 		ClientRequestTimestamp: abortAcceptMsg.Request.Timestamp,
 		ClientId: abortAcceptMsg.Request.ClientId,
-		Status: "failure",
+		Status: "abort",
 	}
 
 	node.muReplies.Lock()

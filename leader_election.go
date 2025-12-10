@@ -91,6 +91,9 @@ func (node *Node) startLeaderElection(){
 	node.isLeaderKnown = false
 	node.muLeader.Unlock()
 
+	log.Printf("[Node %d] Starting leader election 2",node.nodeId)
+
+
 	node.muBallot.Lock()
 	updatedBallot := &pb.BallotNumber{
 		NodeId: node.nodeId,
@@ -101,14 +104,22 @@ func (node *Node) startLeaderElection(){
 
 	node.muBallot.Unlock()
 
+	log.Printf("[Node %d] Starting leader election 3",node.nodeId)
+
+
 	prepareMsg := &pb.PrepareMessage{
 		Ballot: updatedBallot,
 	}
+
+	log.Printf("[Node %d] Starting leader election 4",node.nodeId)
+
 
 	node.muCheckpoint.Lock()
 	lastCheckpointSeq := node.latestCheckpointMessage.SequenceNum
 	lastCheckpointDigest := node.latestCheckpointMessage.Digest 
 	node.muCheckpoint.Unlock()
+
+	log.Printf("[Node %d] Starting leader election 5",node.nodeId)
 
 	// Log own PROMISE message
 	selfPromiseMsg := &pb.PromiseMessage {
@@ -119,11 +130,15 @@ func (node *Node) startLeaderElection(){
 		LastCheckpointDigest: lastCheckpointDigest,
 	}
 	
+	log.Printf("[Node %d] Starting leader election 6",node.nodeId)
+
 	node.muProLog.Lock()
 	node.promiseLog.log = make(map[int32]*pb.PromiseMessage)
 	node.promiseLog.log[node.nodeId] = selfPromiseMsg
 	node.promiseLog.isPromiseQuorumReached = false
 	node.muProLog.Unlock()
+
+	log.Printf("[Node %d] Starting leader election 7",node.nodeId)
 
 	go node.broadcastPrepareMessage(prepareMsg)
 }

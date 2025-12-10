@@ -52,6 +52,11 @@ const (
     LogEntryDeleted LogEntryStatus = "DELETED"
 )
 
+type LockEntry struct {
+    mu sync.Mutex
+    holder string
+}
+
 
 type LogEntry struct {
 	mu sync.RWMutex
@@ -86,6 +91,11 @@ type CrossShardTrans struct {
 	shouldKeepSendingAbort bool
 	shouldKeepSendingCommmit bool
 	isCommitOrAbortReceived bool
+}
+
+type lockReleasePair struct {
+    sender   string
+    receiver string
 }
 
 type Node struct {
@@ -136,7 +146,9 @@ type Node struct {
 	promiseLog PromiseLog
 
 	// Project helpers
-	muLocks sync.RWMutex
+	// muLocks sync.RWMutex
+	locks [9001]*LockEntry
+
 	muStatus sync.RWMutex
     status   NodeStatus
 
@@ -171,8 +183,8 @@ type Node struct {
 	muFirstTimeAbortAck sync.RWMutex
 	shouldSendAckForFirstTimeAbort map[string]bool
 
-	muReadOnly sync.RWMutex
-	readOnlyMap map[string]bool
+	// muReadOnly sync.RWMutex
+	// readOnlyMap map[string]bool
 
 	wal *WriteAheadLog
 
@@ -220,9 +232,10 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		shouldSendAckForFirstTimeAbort:make(map[string]bool),
 		twoPcAbortQueue:make([]*pb.TwoPCAbortMessage, 0),
 		twoPcPrepareQueue: make([]*pb.TwoPCPrepareMessage, 0),
+		// locks: make(map[string]string),
 	}
 
-	randomTime := time.Duration(rand.Intn(100)+200) * time.Millisecond
+	randomTime := time.Duration(rand.Intn(300)+100) * time.Millisecond
 	newNode.livenessTimer = NewCustomTimer(randomTime,newNode.onLivenessTimerExpired)
 
 	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)
@@ -235,6 +248,12 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		log: make([]*pb.PrepareMessage,0),
 		highestBallotPrepare: nil,
 	}
+
+	for i := 0; i < 9001; i++ {
+        newNode.locks[i] = &LockEntry{
+            holder: "", 
+        }
+    }
 
 	dataDir := fmt.Sprintf("./wal/node_%d", nodeId)
 	wal, _ := NewWriteAheadLog(nodeId, dataDir)

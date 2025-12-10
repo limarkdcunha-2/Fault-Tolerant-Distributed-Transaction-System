@@ -179,7 +179,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			}
 		}
 
-		result,ok := client.waitForReply(pending, 300*time.Millisecond)
+		result,ok := client.waitForReply(pending, 500*time.Millisecond)
 		if ok {
 			pending.mu.Lock()	
 			client.updateLeaderFromReply(pending.reply)
@@ -203,7 +203,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 
 		client.broadcastToAllNodes(req,targetNodeIds)
 
-		result,ok = client.waitForReply(pending, 500*time.Millisecond)
+		result,ok = client.waitForReply(pending, 600*time.Millisecond)
 		if ok {
 			pending.mu.Lock()
 			client.updateLeaderFromReply(pending.reply)

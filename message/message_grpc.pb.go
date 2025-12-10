@@ -78,7 +78,7 @@ type MessageServiceClient interface {
 	PrintAcceptLog(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	FailNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RecoverNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	PrintBalance(ctx context.Context, in *PrintBalanceReq, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	PrintBalance(ctx context.Context, in *PrintBalanceReq, opts ...grpc.CallOption) (*PrintBalanceResp, error)
 	ApplyShardMap(ctx context.Context, in *ApplyShardMapRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	MoveDatapoint(ctx context.Context, in *MoveDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	DeleteDatapoint(ctx context.Context, in *DeleteDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
@@ -283,9 +283,9 @@ func (c *messageServiceClient) RecoverNode(ctx context.Context, in *emptypb.Empt
 	return out, nil
 }
 
-func (c *messageServiceClient) PrintBalance(ctx context.Context, in *PrintBalanceReq, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *messageServiceClient) PrintBalance(ctx context.Context, in *PrintBalanceReq, opts ...grpc.CallOption) (*PrintBalanceResp, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
+	out := new(PrintBalanceResp)
 	err := c.cc.Invoke(ctx, MessageService_PrintBalance_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -357,7 +357,7 @@ type MessageServiceServer interface {
 	PrintAcceptLog(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	FailNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	RecoverNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
-	PrintBalance(context.Context, *PrintBalanceReq) (*emptypb.Empty, error)
+	PrintBalance(context.Context, *PrintBalanceReq) (*PrintBalanceResp, error)
 	ApplyShardMap(context.Context, *ApplyShardMapRequest) (*emptypb.Empty, error)
 	MoveDatapoint(context.Context, *MoveDatapointRequest) (*emptypb.Empty, error)
 	DeleteDatapoint(context.Context, *DeleteDatapointRequest) (*emptypb.Empty, error)
@@ -429,7 +429,7 @@ func (UnimplementedMessageServiceServer) FailNode(context.Context, *emptypb.Empt
 func (UnimplementedMessageServiceServer) RecoverNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RecoverNode not implemented")
 }
-func (UnimplementedMessageServiceServer) PrintBalance(context.Context, *PrintBalanceReq) (*emptypb.Empty, error) {
+func (UnimplementedMessageServiceServer) PrintBalance(context.Context, *PrintBalanceReq) (*PrintBalanceResp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintBalance not implemented")
 }
 func (UnimplementedMessageServiceServer) ApplyShardMap(context.Context, *ApplyShardMapRequest) (*emptypb.Empty, error) {

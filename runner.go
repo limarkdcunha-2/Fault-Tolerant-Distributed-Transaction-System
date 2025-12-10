@@ -25,15 +25,15 @@ import (
 )
 
 type Runner struct {
-	nodeConfigs  []NodeConfig
-	testCases    map[int]TestCase
-	nodeClients  map[int32]pb.MessageServiceClient
+	nodeConfigs []NodeConfig
+	testCases map[int]TestCase
+	nodeClients map[int32]pb.MessageServiceClient
 	client *Client
 
-    muTxHistory      sync.RWMutex
-	txHistory        []TransactionEdge
-	maxTxHistory     int
-	currentShardMap  map[string]int32
+    muTxHistory sync.RWMutex
+	txHistory []TransactionEdge
+	maxTxHistory int
+	currentShardMap map[string]int32
 }
 
 type TransactionBatch struct {
@@ -75,6 +75,7 @@ func NewRunner() *Runner {
     return runner
 }
 
+// TO DO automate this
 func (r *Runner) initializeShardMap() {
 	r.muTxHistory.Lock()
 	defer r.muTxHistory.Unlock()
@@ -121,7 +122,7 @@ func (r *Runner) RunAllTestSets() {
     reader := bufio.NewReader(os.Stdin)
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        if setNum != 1 {
+        if setNum != 9 {
             continue
         }
 
@@ -130,7 +131,7 @@ func (r *Runner) RunAllTestSets() {
         fmt.Printf("[Runner] Running Set %d — live nodes %v\n", tc.SetNumber, tc.LiveNodes)
         fmt.Printf("=========================================\n")
 
-        fmt.Print("\nUse benchmark workload instead of CSV? (y/n): ")
+        fmt.Print("\nUse benchmark workload instead of test file (CSV)? (y/n): ")
         choice, _ := reader.ReadString('\n')
         choice = strings.TrimSpace(strings.ToLower(choice))
 
@@ -180,7 +181,7 @@ func (r *Runner) ExecuteTestCase(tc TestCase) (int) {
         if batch.isControl {
             cmd := batch.transactions[0]
             // This delay is impt
-            time.Sleep(1 * time.Second)
+            time.Sleep(2 * time.Second)
 
 			if cmd.IsFailNode {
 				log.Printf("[Runner] Executing Fail Node %d...", cmd.TargetNodeId)
@@ -367,9 +368,9 @@ func (r *Runner) showInteractiveMenu(transactionCount int) {
         // fmt.Println("7. Stop server timers")
         fmt.Println("8. View client side replies")
         fmt.Println("9. Proceed to next batch")
-        fmt.Println("10. Performance metrics")
-        fmt.Println("11. Print Reshard")
-        fmt.Println("12. Apply Reshard")
+        fmt.Println("10. Performance")
+        fmt.Println("11. PrintReshard")
+        // fmt.Println("12. Apply Reshard")
         fmt.Println("========================================")
         fmt.Print("Enter choice (1-9): ")
 
@@ -412,8 +413,8 @@ func (r *Runner) showInteractiveMenu(transactionCount int) {
             r.client.CalculatePerformance(transactionCount)
         case "11":
             r.PrintReshard()
-        case "12:":
-            r.ApplyReshard()
+        case "12":
+            // r.ApplyReshard()
         default:
             fmt.Println("Invalid choice. Please enter 1-15.")
         }
@@ -485,30 +486,44 @@ func (r *Runner) PrintStatusAll() {
 }
 
 func (r *Runner) PrintBalanceAll(datapoint string){
-    datapointInt, err := strconv.ParseInt(datapoint, 10, 0)
-	if err != nil {
-		log.Printf("failed to convert string to int32: %v", err)
-        return
-	}
-
-    targetClusterId := getClusterId(int32(datapointInt))
+    targetClusterId := r.client.getClusterForAccount(datapoint)
 
     r.client.muCluster.RLock()
-    targetNodeIds := r.client.clusterInfo[targetClusterId].NodeIds
+    info, ok := r.client.clusterInfo[targetClusterId]
     r.client.muCluster.RUnlock()
 
-    for _, nodeId := range targetNodeIds {
+    if !ok {
+        fmt.Printf("Output: Error (Cluster %d not found)\n", targetClusterId)
+    }
+
+    sortedNodeIds := make([]int32, len(info.NodeIds))
+    copy(sortedNodeIds, info.NodeIds)
+    sort.Slice(sortedNodeIds, func(i, j int) bool { 
+        return sortedNodeIds[i] < sortedNodeIds[j] 
+    })
+
+    var outputParts []string
+
+    for _, nodeId := range sortedNodeIds {
         client, exists := r.nodeClients[nodeId]
         if !exists {
             log.Printf("[Runner] No connection to node %d", nodeId)
             continue
         }
 
-        _, err := client.PrintBalance(context.Background(),  &pb.PrintBalanceReq{Datapoint: datapoint})
+        resp, err := client.PrintBalance(context.Background(),  &pb.PrintBalanceReq{Datapoint: datapoint})
 
         if err != nil {
-            log.Printf("[Runner] Failed to print log for node %d: %v",nodeId, err)
+            log.Printf("[Runner] Failed to get balance for datapoint%s from node %d: %v",datapoint,nodeId, err)
+        } else{
+            outputParts = append(outputParts, fmt.Sprintf("n%d: %d", nodeId, resp.Balance))
         }
+    }
+
+    if len(outputParts) == 0 {
+         fmt.Printf("Balance: Data not found on Cluster %d\n", targetClusterId)
+    } else {
+         fmt.Printf("Balance: %s\n", strings.Join(outputParts, ", "))
     }
 }
 
@@ -519,20 +534,17 @@ func (r *Runner) StopClient() {
 }
 
 
-// PrintReshard computes and displays resharding plan
 func (r *Runner) PrintReshard() {
+    // Copy creation
 	r.muTxHistory.RLock()
-	txHistoryCopy := make([]TransactionEdge, len(r.txHistory))
-	copy(txHistoryCopy, r.txHistory)
-	currentMapCopy := make(map[string]int32)
-	for k, v := range r.currentShardMap {
-		currentMapCopy[k] = v
-	}
+	historyCopy := make([]TransactionEdge, len(r.txHistory))
+    copy(historyCopy, r.txHistory)
 	r.muTxHistory.RUnlock()
 	
-	log.Printf("[PrintReshard] Computing resharding based on %d transactions", len(txHistoryCopy))
+	log.Printf("[PrintReshard] Computing resharding based on %d transactions", len(historyCopy))
 	
-	result := CalculateResharding(txHistoryCopy, currentMapCopy, 3)
+    numClusters := int32(3)
+	result := CalculateResharding(historyCopy, r.currentShardMap, numClusters)
 	
 	fmt.Println("\n========================================")
 	fmt.Println("         RESHARDING PLAN")
@@ -544,12 +556,10 @@ func (r *Runner) PrintReshard() {
 		return
 	}
 	
-	// Sort moves for consistent output
 	sort.Slice(result.Moves, func(i, j int) bool {
 		return result.Moves[i].AccountID < result.Moves[j].AccountID
 	})
 	
-	// Print first 50 moves (or all if fewer)
 	maxPrint := 50
 	if len(result.Moves) < maxPrint {
 		maxPrint = len(result.Moves)
@@ -557,98 +567,58 @@ func (r *Runner) PrintReshard() {
 	
 	for i := 0; i < maxPrint; i++ {
 		move := result.Moves[i]
-		fmt.Printf("%s, c%d, c%d\n", move.AccountID, move.FromCluster, move.ToCluster)
+		fmt.Printf("(%s, c%d, c%d)\n", move.AccountID, move.FromCluster, move.ToCluster)
 	}
 	
 	if len(result.Moves) > maxPrint {
 		fmt.Printf("... and %d more moves\n", len(result.Moves)-maxPrint)
 	}
-	
-	fmt.Println("========================================")
-	
-	// Calculate and print metrics
-	graph := BuildGraphFromTransactions(txHistoryCopy)
-	oldCost := CalculateCutCost(graph, currentMapCopy)
-	newCost := CalculateCutCost(graph, result.NewMapping)
-	
-	fmt.Printf("\nCross-shard edges (old): %d\n", oldCost)
-	fmt.Printf("Cross-shard edges (new): %d\n", newCost)
-	if oldCost > 0 {
-		improvement := float64(oldCost-newCost) / float64(oldCost) * 100
-		fmt.Printf("Improvement: %.1f%%\n", improvement)
-	}
-	fmt.Println()
+    r.applyResharding(result.Moves,result.NewMapping)
 }
 
-func (r *Runner) ApplyReshard() {
-	r.muTxHistory.RLock()
-    txHistoryCopy := make([]TransactionEdge, len(r.txHistory))
-    copy(txHistoryCopy, r.txHistory)
-    currentMapCopy := make(map[string]int32)
-    for k, v := range r.currentShardMap {
-        currentMapCopy[k] = v
-    }
-    r.muTxHistory.RUnlock()
+func (r *Runner) applyResharding(moves []ReshardMove,newMapping map[string]int32) {
+    fmt.Println("\n[Resharding] Starting OFFLINE migration (Sequential)...")
+    start := time.Now()
     
-    log.Printf("[ApplyReshard] Starting resharding process...")
-    fmt.Println("\n========================================")
-    fmt.Println("      APPLYING RESHARDING")
-    fmt.Println("========================================")
-    
-    // Compute resharding
-    result := CalculateResharding(txHistoryCopy, currentMapCopy, 3)
-    
-    if len(result.Moves) == 0 {
-        log.Printf("[ApplyReshard] No moves needed")
-        fmt.Println("No resharding needed - current mapping is optimal")
-        return
-    }
-    
-    fmt.Printf("Moving %d accounts...\n", len(result.Moves))
-    
-    // Step 1: Apply new shard map to all nodes
-    log.Printf("[ApplyReshard] Step 1: Broadcasting new shard map to all nodes")
-    if err := r.broadcastShardMap(result.NewMapping); err != nil {
-        log.Printf("[ApplyReshard] ERROR: Failed to broadcast shard map: %v", err)
-        fmt.Printf("ERROR: Failed to update shard map on nodes: %v\n", err)
-        return
-    }
-    fmt.Println("✓ Updated shard map on all nodes")
-    
-    // Step 2: Move data for each account
-    log.Printf("[ApplyReshard] Step 2: Moving %d accounts", len(result.Moves))
     successCount := 0
-    errorCount := 0
-    
-    for i, move := range result.Moves {
-        if i%100 == 0 && i > 0 {
-            fmt.Printf("  Progress: %d/%d accounts moved\n", i, len(result.Moves))
-        }
+    failCount := 0
+
+    for _, move := range moves {
+        r.currentShardMap[move.AccountID] = move.ToCluster
+
+        err := r.moveAccount(move)
         
-        if err := r.moveAccount(move); err != nil {
-            log.Printf("[ApplyReshard] ERROR moving account %s: %v", move.AccountID, err)
-            errorCount++
+        if err != nil {
+            log.Printf("[Resharding] Failed to move Account %s: %v", move.AccountID, err)
+            failCount++
         } else {
+            r.currentShardMap[move.AccountID] = move.ToCluster
             successCount++
         }
+        
+        if (successCount+failCount) % 100 == 0 {
+            fmt.Printf("... processed %d/%d moves\n", successCount+failCount, len(moves))
+        }
     }
-    
-    fmt.Printf("✓ Completed: %d successful, %d errors\n", successCount, errorCount)
-    
-    // Step 3: Update local shard map
-    r.muTxHistory.Lock()
-    r.currentShardMap = result.NewMapping
-    r.muTxHistory.Unlock()
-    
-    log.Printf("[ApplyReshard] Resharding complete: %d moves executed", successCount)
-    fmt.Println("========================================")
-    fmt.Println("Resharding complete!")
-    fmt.Println("========================================")
 
+    fmt.Println("[Resharding] Updating Client Routing Table...")
+    r.client.UpdateShardMap(newMapping)
+
+    fmt.Println("[Resharding] Broadcasting New Map to All Nodes...")
+    if err := r.broadcastShardMap(newMapping); err != nil {
+        log.Printf("[Resharding] Warning: Failed to broadcast map to some nodes: %v", err)
+    }
+
+    duration := time.Since(start)
+    fmt.Printf("\n[Resharding Complete] Time: %v | Moved: %d | Failed: %d\n", duration, successCount, failCount)
+
+    r.muTxHistory.Lock()
+    r.txHistory = make([]TransactionEdge, 0)
+    r.muTxHistory.Unlock()
 }
 
+
 func (r *Runner) broadcastShardMap(newMapping map[string]int32) error {
-    // Convert map to protobuf entries
     entries := make([]*pb.ReshardEntry, 0, len(newMapping))
     for accountID, clusterID := range newMapping {
         entries = append(entries, &pb.ReshardEntry{
@@ -661,7 +631,6 @@ func (r *Runner) broadcastShardMap(newMapping map[string]int32) error {
         Entries: entries,
     }
     
-    // Send to all nodes
     var wg sync.WaitGroup
     errChan := make(chan error, len(r.nodeClients))
     
@@ -693,20 +662,16 @@ func (r *Runner) broadcastShardMap(newMapping map[string]int32) error {
     return nil
 }
 
-// moveAccount moves a single account from source to destination cluster
 func (r *Runner) moveAccount(move ReshardMove) error {
-    // Step 1: Read balance from source cluster
     balance, err := r.getBalanceFromCluster(move.AccountID, move.FromCluster)
     if err != nil {
         return fmt.Errorf("failed to read balance: %v", err)
     }
     
-    // Step 2: Write to all nodes in destination cluster
     if err := r.writeToCluster(move.AccountID, move.ToCluster, balance); err != nil {
         return fmt.Errorf("failed to write to destination: %v", err)
     }
-    
-    // Step 3: Delete from all nodes in source cluster
+
     if err := r.deleteFromCluster(move.AccountID, move.FromCluster); err != nil {
         // Log but don't fail - data is already in destination
         log.Printf("[ApplyReshard] Warning: failed to delete %s from source cluster %d: %v",
@@ -719,9 +684,7 @@ func (r *Runner) moveAccount(move ReshardMove) error {
     return nil
 }
 
-// getBalanceFromCluster reads balance from any node in the cluster
 func (r *Runner) getBalanceFromCluster(accountID string, clusterID int32) (int32, error) {
-    // Get cluster info
     r.client.muCluster.RLock()
     nodeIDs := r.client.clusterInfo[clusterID].NodeIds
     r.client.muCluster.RUnlock()
@@ -730,7 +693,6 @@ func (r *Runner) getBalanceFromCluster(accountID string, clusterID int32) (int32
         return 0, fmt.Errorf("no nodes found in cluster %d", clusterID)
     }
     
-    // Try each node until we get a successful response
     for _, nodeID := range nodeIDs {
         client, exists := r.nodeClients[nodeID]
         if !exists {
@@ -754,7 +716,6 @@ func (r *Runner) getBalanceFromCluster(accountID string, clusterID int32) (int32
     return 0, fmt.Errorf("failed to read balance from any node in cluster %d", clusterID)
 }
 
-// writeToCluster writes account to all nodes in destination cluster
 func (r *Runner) writeToCluster(accountID string, clusterID int32, balance int32) error {
     // Get cluster info
     r.client.muCluster.RLock()
@@ -808,7 +769,6 @@ func (r *Runner) writeToCluster(accountID string, clusterID int32, balance int32
     return nil
 }
 
-// deleteFromCluster deletes account from all nodes in source cluster
 func (r *Runner) deleteFromCluster(accountID string, clusterID int32) error {
     // Get cluster info
     r.client.muCluster.RLock()

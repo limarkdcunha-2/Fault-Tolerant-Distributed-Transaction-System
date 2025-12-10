@@ -20,6 +20,18 @@ type Graph struct {
 	Edges map[string]map[string]int // adjs list with edge weights
 }
 
+type ReshardingResult struct {
+	NewMapping map[string]int32 
+	Moves []ReshardMove 
+}
+
+type ReshardMove struct {
+	AccountID string
+	FromCluster int32
+	ToCluster int32
+}
+
+
 func NewGraph() *Graph {
 	return &Graph{
 		Vertices: make(map[string]bool),
@@ -28,11 +40,9 @@ func NewGraph() *Graph {
 }
 
 func (g *Graph) AddEdge(u, v string) {
-	// Add vertices
 	g.Vertices[u] = true
 	g.Vertices[v] = true
 
-	// Add edge (undirected, so add both directions)
 	if g.Edges[u] == nil {
 		g.Edges[u] = make(map[string]int)
 	}
@@ -54,17 +64,6 @@ func (g *Graph) GetDegree(v string) int {
 	return degree
 }
 
-type ReshardingResult struct {
-	NewMapping map[string]int32 
-	Moves []ReshardMove 
-}
-
-type ReshardMove struct {
-	AccountID string
-	FromCluster int32
-	ToCluster int32
-}
-
 
 func BuildGraphFromTransactions(transactions []TransactionEdge) *Graph {
 	graph := NewGraph()
@@ -76,105 +75,72 @@ func BuildGraphFromTransactions(transactions []TransactionEdge) *Graph {
 	return graph
 }
 
-func PartitionGraph(graph *Graph, k int32, currentMapping map[string]int32) map[string]int32 {
-	numClusters := int(k)
-	newMapping := make(map[string]int32)
-	
-	// Initialize cluster sizes
-	clusterSizes := make([]int, numClusters)
-	
-	// Calculate target size for balanced partitions
-	totalVertices := len(graph.Vertices)
-	targetSize := totalVertices / numClusters
-	maxSize := targetSize + (targetSize / 10) // Allow 10% imbalance
-	
-	log.Printf("[Resharding] Total vertices: %d, Target size per cluster: %d, Max size: %d",
-		totalVertices, targetSize, maxSize)
-	
-	// Step 1: Sort vertices by degree (high to low)
-	type VertexDegree struct {
-		Vertex string
-		Degree int
-	}
-	
-	vertexList := make([]VertexDegree, 0, len(graph.Vertices))
-	for v := range graph.Vertices {
-		vertexList = append(vertexList, VertexDegree{
-			Vertex: v,
-			Degree: graph.GetDegree(v),
-		})
-	}
-	
-	sort.Slice(vertexList, func(i, j int) bool {
-		return vertexList[i].Degree > vertexList[j].Degree
-	})
-	
-	// Step 2: Greedy assignment
-	for _, vd := range vertexList {
-		v := vd.Vertex
-		
-		// Calculate affinity to each cluster
-		clusterAffinity := make([]int, numClusters)
-		
-		// Check edges to already-assigned vertices
-		if neighbors, exists := graph.Edges[v]; exists {
-			for neighbor, weight := range neighbors {
-				if assignedCluster, assigned := newMapping[neighbor]; assigned {
-					clusterAffinity[assignedCluster-1] += weight
-				}
-			}
-		}
-		
-		// Find best cluster (highest affinity, respecting balance)
-		bestCluster := int32(-1)
-		bestScore := -1
-		
-		for c := 0; c < numClusters; c++ {
-			// Skip if cluster is full
-			if clusterSizes[c] >= maxSize {
-				continue
-			}
-			
-			// Prefer clusters with higher affinity
-			// Tie-break by preferring current cluster (minimize moves)
-			score := clusterAffinity[c] * 1000 // weight affinity heavily
-			
-			// Small bonus if this is the current cluster
-			if currentCluster, exists := currentMapping[v]; exists && currentCluster == int32(c+1) {
-				score += 10
-			}
-			
-			// Prefer clusters that are smaller (for balance)
-			score -= clusterSizes[c]
-			
-			if score > bestScore {
-				bestScore = score
-				bestCluster = int32(c + 1)
-			}
-		}
-		
-		// If no cluster found (all full), assign to smallest
-		if bestCluster == -1 {
-			minSize := clusterSizes[0]
-			bestCluster = 1
-			for c := 1; c < numClusters; c++ {
-				if clusterSizes[c] < minSize {
-					minSize = clusterSizes[c]
-					bestCluster = int32(c + 1)
-				}
-			}
-		}
-		
-		newMapping[v] = bestCluster
-		clusterSizes[bestCluster-1]++
-	}
-	
-	// Log cluster sizes
-	for c := 0; c < numClusters; c++ {
-		log.Printf("[Resharding] Cluster %d size: %d", c+1, clusterSizes[c])
-	}
-	
-	return newMapping
+func PartitionGraph(graph *Graph, numClusters int32, currentMapping map[string]int32) map[string]int32 {
+    type Node struct {
+        ID     string
+        Degree int
+    }
+    nodes := make([]Node, 0, len(graph.Vertices))
+    for v := range graph.Vertices {
+        nodes = append(nodes, Node{ID: v, Degree: graph.GetDegree(v)})
+    }
+    sort.Slice(nodes, func(i, j int) bool {
+        return nodes[i].Degree > nodes[j].Degree
+    })
+
+    newMapping := make(map[string]int32)
+    clusterLoad := make(map[int32]int)
+    
+    totalNodes := len(nodes)
+    targetLoad := float64(totalNodes) / float64(numClusters)
+
+	if targetLoad < 1.0 { targetLoad = 1.0 }
+    
+    for _, node := range nodes {
+        bestCluster := int32(1)
+        bestScore := -9999999.0 // Start very low
+
+        for c := int32(1); c <= numClusters; c++ {
+            
+            affinity := 0.0
+            if neighbors, ok := graph.Edges[node.ID]; ok {
+                for neighbor, weight := range neighbors {
+                    if assignedTo, exists := newMapping[neighbor]; exists {
+                        if assignedTo == c {
+                            affinity += float64(weight) * 200.0 
+                        }
+                    } else if currentMapping[neighbor] == c {
+                        affinity += float64(weight) * 100.0 
+                    }
+                }
+            }
+
+            stability := 0.0
+            if currentMapping[node.ID] == c {
+                stability = 50.0
+            }
+
+            currentCount := float64(clusterLoad[c])
+            loadPenalty := 0.0
+            
+            if currentCount > (targetLoad * 1.2) { 
+                excess := currentCount - targetLoad
+                loadPenalty = (excess * excess) * 10.0 
+            }
+
+            score := affinity + stability - loadPenalty
+
+            if score > bestScore {
+                bestScore = score
+                bestCluster = c
+            }
+        }
+
+        newMapping[node.ID] = bestCluster
+        clusterLoad[bestCluster]++
+    }
+
+    return newMapping
 }
 
 

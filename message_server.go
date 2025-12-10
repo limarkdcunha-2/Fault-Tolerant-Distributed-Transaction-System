@@ -185,11 +185,8 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, ballot *pb.Ballo
 
 	if isPending {	
 		node.muPending.Unlock()
-        // log.Printf("[Node %d]: Duplicate (pending) from client %d - ignoring retry",
-        //     node.nodeId, req.ClientId)
         return
     }
-	// node.muPending.Unlock()
 
 	if !node.tryAcquireTransactionLocks(req.Transaction.Sender,req.Transaction.Receiver,reqKey) {
 		node.muPending.Unlock()
@@ -199,30 +196,8 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, ballot *pb.Ballo
 		return
 	}
 
-	// Optimistically mark as true to reduce holding muPending for too long
-	// If not done this way bursts of request procesing will slow doOMMIT message build completewn the execution by a lot
 	node.pendingRequests[reqKey] = true
 	node.muPending.Unlock()
-
-	// log.Printf("[Node %d] I am the LEADER WITH BALLOT(N:%d)",node.nodeId,ballot.NodeId)
-
-	// // Process as leader
-	// // 4. Check if data points are locked
-	// // // node.muLocks.Lock()ck()
-	// if !node.tryAcquireTransactionLocks(req.Transaction.Sender,req.Transaction.Receiver,reqKey) {
-	// 	// 4a If locked simply skip the transaction
-	// 	// node.muLocks.Unlock()
-
-		
-
-	// 	// node.removePendingRequest(req.ClientId, req.Timestamp)
-
-	// 	return
-	// }
-
-	// 4b Else lock both the datapoints
-	// log.Printf("[Node %d] Acquired locks on both the data points (%s, %s)",
-	// node.nodeId,req.Transaction.Sender,req.Transaction.Receiver)
 
 	// 5. After all checks are complete initiate consensus round
 	node.initiateConsensusRound(req,pb.AcceptType_INTRA_SHARD,ballot)
@@ -242,14 +217,40 @@ func(node *Node) handleCrossShardRequest(req *pb.ClientRequest,ballot *pb.Ballot
 
 	reqKey := makeRequestKey(req.ClientId, req.Timestamp)
 	
-	node.muPendingAckReplies.Lock()
+	leaderId := ballot.NodeId
+	// 3. Reroute the request to leader
+	if node.nodeId != leaderId {
+		node.muPending.RLock()
+		_, isPending := node.pendingRequests[reqKey]
+		node.muPending.RUnlock()
+
+		if isPending {
+			log.Printf("[Node %d] [CROSS-SHARD] Duplicate (pending) from client %d - ignoring retry",node.nodeId, req.ClientId)
+			return
+		}
+
+		log.Printf("[Node %d] [CROSS-SHARD] Not primary, routing client request to primary", node.nodeId)
+		
+		go func() {
+            node.peers[leaderId].SendRequestMessage(context.Background(),req)
+
+			if !node.livenessTimer.IsRunning() { 
+				log.Printf("[Node %d] [CROSS-SHARD] Starting liveness timer as reroute to primary", node.nodeId)
+                node.livenessTimer.Start() 
+            }
+        }()
+		return
+	}
+
+	// Only leader will have this authority
+	node.muPendingAckReplies.RLock()
 	if _,exists := node.pendingAckReplies[reqKey]; exists {
-		node.muPendingAckReplies.Unlock()
+		node.muPendingAckReplies.RLock()
 
 		log.Printf("[Node %d] [CROSS-SHARD] Duplicate request from client %d (ts=%s). Waiting for 2nd round of consensus",node.nodeId, req.ClientId, req.Timestamp.AsTime())
 		return
 	}
-	node.muPendingAckReplies.Unlock()
+	node.muPendingAckReplies.RLock()
 
 	// 2. Check pending requests (assigned seq but not executed)
 	node.muPending.Lock()
@@ -263,33 +264,14 @@ func(node *Node) handleCrossShardRequest(req *pb.ClientRequest,ballot *pb.Ballot
         return
     }
 
-	leaderId := ballot.NodeId
-	// 3. Reroute the request to leader
-	if node.nodeId != leaderId {
-		node.muPending.Unlock()
-
-		log.Printf("[Node %d] [CROSS-SHARD] Not primary, routing client request to primary", node.nodeId)
-		
-		if !node.livenessTimer.IsRunning() {
-			log.Printf("[Node %d] Starting liveness timer due cross shard request reroute to primary",node.nodeId)
-			node.livenessTimer.Start()
-		}
-		
-		go node.peers[leaderId].SendRequestMessage(context.Background(),req)
-		return
-	}
-
 	// 4. Process as leader of coordinator cluster
 	// 4a Check if data points are locked
 	// node.muLocks.Lock()ck()
 	if node.isLocked(req.Transaction.Sender) {
+		node.muPending.Unlock()
 		// 4a If locked simply skip the transaction
 		log.Printf("[Node %d] [CROSS-SHARD] Rejecting request (%s, %s, %d) due to locks being held on datapoints",node.nodeId,
 		req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
-
-		// Maintaining strict order of locking for these two
-		// node.muLocks.Unlock()
-		node.muPending.Unlock()
 
 		return
 	}
@@ -860,8 +842,8 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	// 2. Check if valid ballot number 
 	if !node.isBallotEqual(entry.Ballot,msg.Ballot) {
-		log.Printf("[Node %d] REJECTED ACCEPTED(%s) Ballot mismatch for (R:%d, S:%d).",
-			node.nodeId,msg.AcceptType, msg.Ballot.RoundNumber, msg.SequenceNum)
+		log.Printf("[Node %d] REJECTED ACCEPTED(%s) seq=%d (R:%d, N:%d).",
+			node.nodeId,msg.AcceptType,msg.SequenceNum, msg.Ballot.RoundNumber, msg.Ballot.NodeId)
 		
 		entry.mu.Unlock()
 		return &emptypb.Empty{}, nil
@@ -871,10 +853,18 @@ func(node *Node) HandleAccepted(ctx context.Context,msg *pb.AcceptedMessage) (*e
 
 	// 3. Quorum already reached so no need for new message
 	if entry.Phase >= PhaseCommitted {
+		if msg.AcceptType == pb.AcceptType_INTRA_SHARD || msg.AcceptType == pb.AcceptType_PREPARE{
+			log.Printf("[Node %d] Ignoring stale ACCEPTED(%s) for (R:%d, S:%d), from 1st 2PC round%v",
+				node.nodeId,msg.AcceptType, entry.Ballot.RoundNumber, entry.SequenceNum, entry.TwoPCPhase)
+			
+			entry.mu.Unlock()
+       	 	return &emptypb.Empty{}, nil
+		}
+
 		// For intra shard transaction or cross shard prepare phase , ignore extra ACCEPTED messages
 		if entry.TwoPCPhase == PhaseNone ||  entry.TwoPCPhase >= PhaseCommitted {
 			log.Printf("[Node %d] Ignoring ACCEPTED(%s) for (R:%d, S:%d), already in Phase %v",
-				node.nodeId,msg.AcceptType, entry.Ballot.RoundNumber, entry.SequenceNum, entry.Phase)
+				node.nodeId,msg.AcceptType, entry.Ballot.RoundNumber, entry.SequenceNum, entry.TwoPCPhase)
 			
 			entry.mu.Unlock()
        	 	return &emptypb.Empty{}, nil
@@ -2530,7 +2520,7 @@ func(node *Node) installMergedAcceptLog2(mergedLog []*pb.AcceptedMessage,winning
 
 					if isLeader{
 						selfAcceptedMessage := &pb.AcceptedMessage{
-							Ballot: node.deepCopyBallot(entry.Ballot),
+							Ballot: node.deepCopyBallot(winningBallot),
 							SequenceNum: seq,
 							Request: node.deepCopyRequest(acceptedMsg.Request),
 							NodeId: node.nodeId,
@@ -4224,7 +4214,7 @@ func (node *Node) PrintAcceptLog(ctx context.Context, req *emptypb.Empty) (*empt
 	return &emptypb.Empty{},nil
 }
 
-func(node *Node) PrintBalance(ctx context.Context,req *pb.PrintBalanceReq ) (*emptypb.Empty, error) {
+func(node *Node) PrintBalance(ctx context.Context,req *pb.PrintBalanceReq ) (*pb.PrintBalanceResp, error) {
 	balance,err := node.getBalance(req.Datapoint)
 
 	if err == nil {
@@ -4233,7 +4223,9 @@ func(node *Node) PrintBalance(ctx context.Context,req *pb.PrintBalanceReq ) (*em
 		log.Printf("[Node %d] Error while reading balance for datapoint=%s err=%v",node.nodeId,req.Datapoint,err)
 	}
 
-	return &emptypb.Empty{},nil
+	return &pb.PrintBalanceResp{
+        Balance: balance, 
+    }, nil
 }
 
 func(node *Node) FailNode(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {

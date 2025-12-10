@@ -55,6 +55,9 @@ type Client struct {
 	muCluster sync.RWMutex
 	clusterInfo map[int32]*ClusterInfo
 
+	muShardMap sync.RWMutex
+    shardMap   map[string]int32
+
 	// for graceful shutdown
 	muStop   sync.RWMutex
     stopChan chan struct{}
@@ -69,10 +72,11 @@ type Client struct {
 
 func NewClient(port int) (*Client, error) {
 	client := &Client{
-		port:        port,
+		port: port,
 		serverConns: make(map[int32]*grpc.ClientConn),
 		pendingReqs: make(map[string]*PendingRequest),
 		clusterInfo: make(map[int32]*ClusterInfo),
+		shardMap: make(map[string]int32),
 		performanceMeasureMap: make(map[string]*TransactionRecord),
 		stopChan: make(chan struct{}),
         stopped: false, 
@@ -82,6 +86,33 @@ func NewClient(port int) (*Client, error) {
 	client.buildClientClusterMap()
 
 	return client, nil
+}
+
+func (client *Client) UpdateShardMap(newMap map[string]int32) {
+    client.muShardMap.Lock()
+    defer client.muShardMap.Unlock()
+    
+    client.shardMap = make(map[string]int32, len(newMap))
+    for k, v := range newMap {
+        client.shardMap[k] = v
+    }
+    log.Printf("[Client] Updated routing table with %d entries", len(newMap))
+}
+
+func (client *Client) getClusterForAccount(accountStr string) int32 {
+    // 1. Check Dynamic Map
+    client.muShardMap.RLock()
+    clusterID, found := client.shardMap[accountStr]
+    client.muShardMap.RUnlock()
+
+    if found {
+        return clusterID
+    }
+
+    // 2. Fallback to Static Logic (Initial State)
+    // Assuming your static logic is (AccountID % 3) + 1 or similar
+    accInt, _ := strconv.Atoi(accountStr)
+    return getClusterId(int32(accInt)) 
 }
 
 func (client *Client) startGrpcServer() error {
@@ -157,25 +188,18 @@ func (client *Client) SendTransaction(tx Transaction) string {
 		// req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
 		client.muCluster.RLock()
-		
-		senderIntVal, err := strconv.Atoi(req.Transaction.Sender) 
-		if err != nil {
-			// log.Printf("[Client] Failed to convert value of client sender from string to int %v",err)
-			break
-		}
 
-		clusterId := getClusterId(int32(senderIntVal))
+		targetClusterID := client.getClusterForAccount(req.Transaction.Sender)
 		// log.Printf("[Client] Sending transaction to cluster=%d",clusterId)
 
-		_,exists := client.clusterInfo[clusterId]
-
+		_,exists := client.clusterInfo[targetClusterID]
 		if !exists {
-			log.Printf("[Client] Cluster info not present=%d",clusterId)
+			log.Printf("[Client] Cluster info not present=%d",targetClusterID)
 		}
 		// log.Printf("[Client] cluster info presnt%v",info.NodeIds)
 
-		targetLeaderId := client.clusterInfo[clusterId].LeaderId
-		targetNodeIds := client.clusterInfo[clusterId].NodeIds
+		targetLeaderId := client.clusterInfo[targetClusterID].LeaderId
+		targetNodeIds := client.clusterInfo[targetClusterID].NodeIds
 		// log.Printf("[Client] Sending transaction to cluster=%d leaderId=%d",clusterId,targetLeaderId)
 
 		client.muCluster.RUnlock()
@@ -233,9 +257,6 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			return result
 		}
 	}
-
-	// Returning garbage in case of some unexpected errors
-	return ""
 }
 
 func (client *Client) updateLeaderFromReply(response *pb.ReplyMessage) {
@@ -548,5 +569,5 @@ func (client *Client) CalculatePerformance(txCount int) {
     fmt.Println("---------------------------------------------")
     fmt.Printf("THROUGHPUT:          %.2f Req/Sec\n", throughput)
     fmt.Printf("AVG LATENCY:         %v\n", avgLatency)
-    fmt.Println("=============================================\n")
+    fmt.Println("=============================================")
 }

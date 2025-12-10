@@ -48,6 +48,10 @@ const (
 	MessageService_FailNode_FullMethodName                      = "/message.MessageService/FailNode"
 	MessageService_RecoverNode_FullMethodName                   = "/message.MessageService/RecoverNode"
 	MessageService_PrintBalance_FullMethodName                  = "/message.MessageService/PrintBalance"
+	MessageService_ApplyShardMap_FullMethodName                 = "/message.MessageService/ApplyShardMap"
+	MessageService_MoveDatapoint_FullMethodName                 = "/message.MessageService/MoveDatapoint"
+	MessageService_DeleteDatapoint_FullMethodName               = "/message.MessageService/DeleteDatapoint"
+	MessageService_GetBalance_FullMethodName                    = "/message.MessageService/GetBalance"
 )
 
 // MessageServiceClient is the client API for MessageService service.
@@ -75,6 +79,10 @@ type MessageServiceClient interface {
 	FailNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RecoverNode(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	PrintBalance(ctx context.Context, in *PrintBalanceReq, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ApplyShardMap(ctx context.Context, in *ApplyShardMapRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	MoveDatapoint(ctx context.Context, in *MoveDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	DeleteDatapoint(ctx context.Context, in *DeleteDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*GetBalanceResponse, error)
 }
 
 type messageServiceClient struct {
@@ -285,6 +293,46 @@ func (c *messageServiceClient) PrintBalance(ctx context.Context, in *PrintBalanc
 	return out, nil
 }
 
+func (c *messageServiceClient) ApplyShardMap(ctx context.Context, in *ApplyShardMapRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_ApplyShardMap_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) MoveDatapoint(ctx context.Context, in *MoveDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_MoveDatapoint_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) DeleteDatapoint(ctx context.Context, in *DeleteDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_DeleteDatapoint_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*GetBalanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetBalanceResponse)
+	err := c.cc.Invoke(ctx, MessageService_GetBalance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MessageServiceServer is the server API for MessageService service.
 // All implementations must embed UnimplementedMessageServiceServer
 // for forward compatibility.
@@ -310,6 +358,10 @@ type MessageServiceServer interface {
 	FailNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	RecoverNode(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	PrintBalance(context.Context, *PrintBalanceReq) (*emptypb.Empty, error)
+	ApplyShardMap(context.Context, *ApplyShardMapRequest) (*emptypb.Empty, error)
+	MoveDatapoint(context.Context, *MoveDatapointRequest) (*emptypb.Empty, error)
+	DeleteDatapoint(context.Context, *DeleteDatapointRequest) (*emptypb.Empty, error)
+	GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error)
 	mustEmbedUnimplementedMessageServiceServer()
 }
 
@@ -379,6 +431,18 @@ func (UnimplementedMessageServiceServer) RecoverNode(context.Context, *emptypb.E
 }
 func (UnimplementedMessageServiceServer) PrintBalance(context.Context, *PrintBalanceReq) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintBalance not implemented")
+}
+func (UnimplementedMessageServiceServer) ApplyShardMap(context.Context, *ApplyShardMapRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ApplyShardMap not implemented")
+}
+func (UnimplementedMessageServiceServer) MoveDatapoint(context.Context, *MoveDatapointRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MoveDatapoint not implemented")
+}
+func (UnimplementedMessageServiceServer) DeleteDatapoint(context.Context, *DeleteDatapointRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteDatapoint not implemented")
+}
+func (UnimplementedMessageServiceServer) GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetBalance not implemented")
 }
 func (UnimplementedMessageServiceServer) mustEmbedUnimplementedMessageServiceServer() {}
 func (UnimplementedMessageServiceServer) testEmbeddedByValue()                        {}
@@ -761,6 +825,78 @@ func _MessageService_PrintBalance_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_ApplyShardMap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ApplyShardMapRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).ApplyShardMap(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_ApplyShardMap_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).ApplyShardMap(ctx, req.(*ApplyShardMapRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_MoveDatapoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MoveDatapointRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).MoveDatapoint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_MoveDatapoint_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).MoveDatapoint(ctx, req.(*MoveDatapointRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_DeleteDatapoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteDatapointRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).DeleteDatapoint(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_DeleteDatapoint_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).DeleteDatapoint(ctx, req.(*DeleteDatapointRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_GetBalance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBalanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).GetBalance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_GetBalance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).GetBalance(ctx, req.(*GetBalanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MessageService_ServiceDesc is the grpc.ServiceDesc for MessageService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -847,6 +983,22 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PrintBalance",
 			Handler:    _MessageService_PrintBalance_Handler,
+		},
+		{
+			MethodName: "ApplyShardMap",
+			Handler:    _MessageService_ApplyShardMap_Handler,
+		},
+		{
+			MethodName: "MoveDatapoint",
+			Handler:    _MessageService_MoveDatapoint_Handler,
+		},
+		{
+			MethodName: "DeleteDatapoint",
+			Handler:    _MessageService_DeleteDatapoint_Handler,
+		},
+		{
+			MethodName: "GetBalance",
+			Handler:    _MessageService_GetBalance_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

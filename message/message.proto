@@ -138,6 +138,36 @@ message PrintBalanceReq {
   string Datapoint = 1;
 }
 
+message ReshardEntry {
+    string account_id = 1;
+    int32 cluster_id = 2;
+}
+
+message ApplyShardMapRequest {
+    repeated ReshardEntry entries = 1;
+}
+
+message MoveDatapointRequest {
+    string account_id = 1;
+    int32 src_cluster = 2;
+    int32 dst_cluster = 3;
+    int32 balance = 4;
+}
+
+message DeleteDatapointRequest {
+    string account_id = 1;
+}
+
+message GetBalanceRequest {
+    string account_id = 1;
+}
+
+message GetBalanceResponse {
+    int32 balance = 1;
+    bool success = 2;
+    string error = 3;
+}
+
 service MessageService {
   rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
   rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
@@ -163,6 +193,11 @@ service MessageService {
   rpc FailNode(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc RecoverNode(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc PrintBalance(PrintBalanceReq) returns (google.protobuf.Empty);
+
+  rpc ApplyShardMap(ApplyShardMapRequest) returns (google.protobuf.Empty);
+  rpc MoveDatapoint(MoveDatapointRequest) returns (google.protobuf.Empty);
+  rpc DeleteDatapoint(DeleteDatapointRequest) returns (google.protobuf.Empty);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
 }
 
 service ClientService {

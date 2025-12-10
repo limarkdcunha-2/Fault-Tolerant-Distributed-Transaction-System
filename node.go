@@ -129,8 +129,14 @@ type Node struct {
 	muState sync.RWMutex
     state   *pebble.DB
 
-	muReqQue sync.RWMutex
-	requestsQueue []*pb.ClientRequest
+	// muReqQue sync.RWMutex
+
+	requestQueue chan *pb.ClientRequest
+	replyQueue chan *pb.ReplyMessage
+	execSignal chan struct{}
+
+	muPendingLeaderReq sync.RWMutex
+	pendingLeaderRequests map[string]*pb.ClientRequest
 
 	muLeader sync.RWMutex
 	inLeaderElection bool
@@ -185,6 +191,8 @@ type Node struct {
 
 	// muReadOnly sync.RWMutex
 	// readOnlyMap map[string]bool
+	muShardMap  sync.RWMutex
+    shardMap    map[string]int32
 
 	wal *WriteAheadLog
 
@@ -223,7 +231,11 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		peers: make( map[int32]pb.MessageServiceClient),
 		replies: make(map[string]*pb.ReplyMessage),
 		pendingRequests: make(map[string]bool),
-		requestsQueue:make([]*pb.ClientRequest, 0),
+		// This size is impt
+		requestQueue:make(chan *pb.ClientRequest, 5000),
+		replyQueue: make(chan *pb.ReplyMessage, 5000),
+		execSignal: make(chan struct{}, 1),
+		pendingLeaderRequests: make(map[string]*pb.ClientRequest),
 		clusterInfo: make(map[int32]*ClusterInfo),
 		crossSharTxs:make(map[string]*CrossShardTrans),
 		pendingAckReplies:make(map[string]*pb.ReplyMessage),
@@ -232,10 +244,11 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		shouldSendAckForFirstTimeAbort:make(map[string]bool),
 		twoPcAbortQueue:make([]*pb.TwoPCAbortMessage, 0),
 		twoPcPrepareQueue: make([]*pb.TwoPCPrepareMessage, 0),
+		shardMap: make(map[string]int32),
 		// locks: make(map[string]string),
 	}
 
-	randomTime := time.Duration(rand.Intn(300)+100) * time.Millisecond
+	randomTime := time.Duration(rand.Intn(400)+200) * time.Millisecond
 	newNode.livenessTimer = NewCustomTimer(randomTime,newNode.onLivenessTimerExpired)
 
 	newNode.prepareTimer = NewCustomTimer(50 * time.Millisecond,newNode.doNothing)
@@ -243,6 +256,8 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 	newNode.muCluster.Lock()
 	newNode.clusterId = newNode.getMyClusterId()
 	newNode.muCluster.Unlock()
+
+	newNode.initializeShardMap()
 
 	newNode.prepareLog = PrepareLog{
 		log: make([]*pb.PrepareMessage,0),
@@ -276,7 +291,34 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
     }
     log.Printf("[Node %d] State successfully loaded into memory.", newNode.nodeId)
 
+	go newNode.runRequestProcessor()
+	go newNode.runExecutionLoop()
+
+	for i := 0; i < 20; i++ {
+        go newNode.runReplyWorker()
+    }
+
 	return newNode,nil
+}
+
+func (node *Node) runReplyWorker() {
+    for reply := range node.replyQueue {
+        node.sendReplyToClient(reply) 
+    }
+}
+
+
+func (node *Node) initializeShardMap() {
+    node.muShardMap.Lock()
+    defer node.muShardMap.Unlock()
+    
+    for i := 1; i <= 9000; i++ {
+        accountID := strconv.Itoa(i)
+        clusterID := getClusterId(int32(i))
+        node.shardMap[accountID] = clusterID
+    }
+    
+    log.Printf("[Node %d] Initialized shard map with range partitioning", node.nodeId)
 }
 
 func(node *Node) buildPeerGrpcConnections(){
@@ -328,6 +370,21 @@ func (node *Node) getMyClusterId() int32 {
     }
     log.Fatalf("[Node %d] FATAL: cannot find own ClusterId in getNodeCluster()", node.nodeId)
     return -1
+}
+
+func (node *Node) getAccountCluster(accountID string) int32 {
+    node.muShardMap.RLock()
+    defer node.muShardMap.RUnlock()
+    
+    if cluster, exists := node.shardMap[accountID]; exists {
+        return cluster
+    }
+    
+    id, err := strconv.Atoi(accountID)
+    if err != nil {
+        return -1
+    }
+    return getClusterId(int32(id))
 }
 
 func (node *Node) GetCachedReply(clientId int32, timestamp  *timestamppb.Timestamp) (*pb.ReplyMessage, bool) {

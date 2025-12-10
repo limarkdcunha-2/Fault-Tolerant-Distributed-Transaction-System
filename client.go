@@ -94,7 +94,7 @@ func (client *Client) startGrpcServer() error {
 	pb.RegisterClientServiceServer(grpcServer, client)
 
 	go func() {
-		log.Printf("[Client] listening for replies on :%d", client.port)
+		// log.Printf("[Client] listening for replies on :%d", client.port)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("[Client] gRPC serve error: %v", err)
 		}
@@ -148,46 +148,48 @@ func (client *Client) SendTransaction(tx Transaction) string {
 
 	for {
 		if client.IsStopped() {
-            log.Printf("[Client] Stopping write request loop (stopped)")
+            // log.Printf("[Client] Stopping write request loop (stopped)")
             return ""
         }
 
 		attemptCount++
-        log.Printf("[Client] Write attempt #%d for request (%s, %s, %d)", attemptCount, 
-		req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+        // log.Printf("[Client] Write attempt #%d for request (%s, %s, %d)", attemptCount, 
+		// req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 
 		client.muCluster.RLock()
 		
 		senderIntVal, err := strconv.Atoi(req.Transaction.Sender) 
 		if err != nil {
-			log.Printf("[Client] Failed to convert value of client sender from string to int %v",err)
+			// log.Printf("[Client] Failed to convert value of client sender from string to int %v",err)
 			break
 		}
 
 		clusterId := getClusterId(int32(senderIntVal))
-		log.Printf("[Client] Sending transaction to cluster=%d",clusterId)
+		// log.Printf("[Client] Sending transaction to cluster=%d",clusterId)
 
-		info,exists := client.clusterInfo[clusterId]
+		_,exists := client.clusterInfo[clusterId]
 
 		if !exists {
 			log.Printf("[Client] Cluster info not present=%d",clusterId)
 		}
-		log.Printf("[Client] cluster info presnt%v",info.NodeIds)
+		// log.Printf("[Client] cluster info presnt%v",info.NodeIds)
 
 		targetLeaderId := client.clusterInfo[clusterId].LeaderId
 		targetNodeIds := client.clusterInfo[clusterId].NodeIds
-		log.Printf("[Client] Sending transaction to cluster=%d leaderId=%d",clusterId,targetLeaderId)
+		// log.Printf("[Client] Sending transaction to cluster=%d leaderId=%d",clusterId,targetLeaderId)
 
 		client.muCluster.RUnlock()
 		
 		grpcClient, _ := client.getConnForNode(targetLeaderId)
+
+		
 		if grpcClient != nil {
 			_, err := grpcClient.SendRequestMessage(context.Background(), req)
 			
 			if err != nil {
-				log.Printf("[Client] Failed to send to leader %d: %v",  targetLeaderId, err)
+				// log.Printf("[Client] Failed to send to leader %d: %v",  targetLeaderId, err)
 			} else {
-				log.Printf("[Client] Sent request to leader %d",  targetLeaderId)
+				// log.Printf("[Client] Sent request to leader %d",  targetLeaderId)
 			}
 		}
 
@@ -198,10 +200,10 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			pending.mu.Unlock()
 
 			if req.Transaction.Sender == req.Transaction.Receiver {
-				log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
+				// log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
 			} else {
-				log.Printf("[Client] Received result=%s for (%s, %s, %d)",
-				result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+				// log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+				// result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 			}
 			
 			
@@ -209,23 +211,23 @@ func (client *Client) SendTransaction(tx Transaction) string {
 		}
 
 		if client.IsStopped() {
-            log.Printf("[Client] Stopping write request loop (stopped)")
+            // log.Printf("[Client] Stopping write request loop (stopped)")
             return ""
         }
 
 		client.broadcastToAllNodes(req,targetNodeIds)
 
-		result,ok = client.waitForReply(pending, 600*time.Millisecond)
+		result,ok = client.waitForReply(pending, 500*time.Millisecond)
 		if ok {
 			pending.mu.Lock()
 			client.updateLeaderFromReply(pending.reply)
 			pending.mu.Unlock()
 			
 			if req.Transaction.Sender == req.Transaction.Receiver {
-				log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
+				// log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
 			} else {
-				log.Printf("[Client] Received result=%s for (%s, %s, %d)",
-				result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+				// log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+				// result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 			}
 
 			return result
@@ -247,12 +249,12 @@ func (client *Client) updateLeaderFromReply(response *pb.ReplyMessage) {
 	leaderIdFromResp := response.Ballot.NodeId
 
 	clusterId := getClusterId(response.ClientId)
-	log.Printf("[Client] Checking leader update for cluster=%d for clientId=%d",clusterId,response.ClientId)
+	// log.Printf("[Client] Checking leader update for cluster=%d for clientId=%d",clusterId,response.ClientId)
 	existingLeaderId := client.clusterInfo[clusterId].LeaderId
 	
     
     if leaderIdFromResp != existingLeaderId {
-		log.Printf("[Client] Updating leaderID from %d to %d for cluster=%d",existingLeaderId,leaderIdFromResp,clusterId)
+		// log.Printf("[Client] Updating leaderID from %d to %d for cluster=%d",existingLeaderId,leaderIdFromResp,clusterId)
         client.clusterInfo[clusterId].LeaderId = leaderIdFromResp
     }
 }
@@ -262,16 +264,16 @@ func (client *Client) broadcastToAllNodes(req *pb.ClientRequest,targetNodeIds []
 		go func(nid int32) {
 			grpcClient, _ := client.getConnForNode(nid)
 			if grpcClient == nil {
-				log.Printf("[Client] No connection to node %d",  nid)
+				// log.Printf("[Client] No connection to node %d",  nid)
 				return
 			}
 						
 			_, err := grpcClient.SendRequestMessage(context.Background(), req)
 			if err != nil {
-				log.Printf("[Client] Failed to broadcast to node %d: %v",  nid, err)
+				// log.Printf("[Client] Failed to broadcast to node %d: %v",  nid, err)
 			} else {
-				log.Printf("[Client] Broadcasted request (%s, %s, %d) to node %d", 
-				req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount, nid)
+				// log.Printf("[Client] Broadcasted request (%s, %s, %d) to node %d", 
+				// req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount, nid)
 			}
 		}(nodeId)
 	}
@@ -319,7 +321,7 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
 		pending.mu.Lock()
 		defer pending.mu.Unlock()
 		
-		log.Printf("[Client] Timeout waiting for reply from server")
+		// log.Printf("[Client] Timeout waiting for reply from server")
 		return "", false
 	}
 }
@@ -405,7 +407,7 @@ func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *gr
 		}
 	}
 	if targetNode == nil {
-		log.Printf("[Client] Node configuration for ID %d not found.",  nodeId)
+		// log.Printf("[Client] Node configuration for ID %d not found.",  nodeId)
 		return nil, nil
 	}
 
@@ -413,7 +415,7 @@ func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *gr
 	conn, err := grpc.NewClient(targetAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 
 	if err != nil {
-		log.Printf("[Client] Failed to connect to node %d at %s: %v",  nodeId, targetAddr, err)
+		// log.Printf("[Client] Failed to connect to node %d at %s: %v",  nodeId, targetAddr, err)
 		return nil, nil
 	}
 
@@ -424,8 +426,8 @@ func (client *Client) getConnForNode(nodeId int32) (pb.MessageServiceClient, *gr
 func (client *Client) HandleReply(ctx context.Context, reply *pb.ReplyMessage) (*emptypb.Empty, error) {
 	// 1. VERIFY REQUEST TIMESTAMP MATCHES
 	if reply.ClientRequestTimestamp == nil {
-		log.Printf("[Client] Rejected reply: Missing request timestamp from Node %d", 
-			 reply.Ballot.NodeId)
+		// log.Printf("[Client] Rejected reply: Missing request timestamp from Node %d", 
+			//  reply.Ballot.NodeId)
 		return &emptypb.Empty{}, nil
 	}
 
@@ -473,7 +475,7 @@ func (client *Client) Stop() {
     if !client.stopped {
         close(client.stopChan)
         client.stopped = true
-        log.Printf("[Client] STOPPED")
+        // log.Printf("[Client] STOPPED")
     }
 }
 

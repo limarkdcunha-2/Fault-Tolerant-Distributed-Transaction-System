@@ -522,6 +522,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 
 	if exists {
 		existingEntry.mu.Lock()
+		// log.Printf("[Node %d] ENTRY LOCK 0",node.nodeId)
 		node.muLog.Unlock()
 
 		// Accept PREPARE - 1st round of pariticipant or coordinator
@@ -537,6 +538,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 					node.nodeId, msg.SequenceNum, existingEntry.Phase,existingEntry.TwoPCPhase)
 
 				existingEntry.mu.Unlock()
+				// log.Printf("[Node %d] ENTRY UNLOCK 1",node.nodeId)
 
 				return &emptypb.Empty{}, nil
 			} else if existingEntry.Phase == PhaseAccepted {
@@ -546,6 +548,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 
 				ballotCopy := node.deepCopyBallot(existingEntry.Ballot)
 				requestCopy := node.deepCopyRequest(existingEntry.Request)
+				seqCopy := existingEntry.SequenceNum
 				// If ballot number is higher then overrwrite in accept log and send accepted with new ballot number	
 				if node.isBallotGreaterThan(msg.Ballot, existingEntry.Ballot) {
 					oldRequest := existingEntry.Request
@@ -557,6 +560,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 					requestCopy = node.deepCopyRequest(msg.Request)
 
 					existingEntry.mu.Unlock()
+					// log.Printf("[Node %d] ENTRY UNLOCK 3",node.nodeId)
 
 					// oldReqKey := makeRequestKey(oldRequest.ClientId, oldRequest.Timestamp)
        				newReqKey := makeRequestKey(msg.Request.ClientId, msg.Request.Timestamp)
@@ -590,11 +594,14 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 						}
 						// node.muLocks.Unlock()
 					}
+				} else {
+					existingEntry.mu.Unlock()
+					// log.Printf("[Node %d] ENTRY UNLOCK 3",node.nodeId)
 				}
 
 				acceptedMessage := &pb.AcceptedMessage{
 					Ballot: ballotCopy,
-					SequenceNum: existingEntry.SequenceNum,
+					SequenceNum: seqCopy,
 					Request: node.deepCopyRequest(requestCopy),
 					NodeId: node.nodeId,
 					AcceptType: msg.AcceptType,
@@ -616,6 +623,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 			// This for sure we know its 2nd round
 			if existingEntry.Phase < PhaseCommitted || existingEntry.TwoPCPhase >= PhaseCommitted{
 				existingEntry.mu.Unlock()
+				// log.Printf("[Node %d] ENTRY UNLOCK 4",node.nodeId)
 				log.Printf("[Node %d] CRITICAL 2PC ACCEPT should have not been possible without entry being present from first pahse",node.nodeId)
 				return &emptypb.Empty{}, nil
 				
@@ -638,6 +646,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 					}
 
 					existingEntry.mu.Unlock()
+					// log.Printf("[Node %d] ENTRY UNLOCK 5",node.nodeId)
 					
 					node.markRequestPending(msg.Request.ClientId, msg.Request.Timestamp)
 
@@ -659,6 +668,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 						AcceptType: msg.AcceptType,
 					}
 					existingEntry.mu.Unlock()
+					log.Printf("[Node %d] ENTRY UNLOCK 6",node.nodeId)
 
 					node.markRequestPending(acceptedMessage.Request.ClientId, acceptedMessage.Request.Timestamp)
 
@@ -728,6 +738,7 @@ func(node *Node) HandleAccept(ctx context.Context,msg *pb.AcceptMessage) (*empty
 				// acquired = true
 				break
 			}
+			log.Printf("[Node %d] Inside loop that waits for lock release in ACCEPT",node.nodeId)
 			time.Sleep(2*time.Millisecond)
 		}
 
@@ -1689,7 +1700,9 @@ func (node *Node) executeInOrder(isLeader bool) {
 		}	
 
 		entry.mu.Lock()
+		// log.Printf("[Node %d] ENTRY LOCK 1",node.nodeId)
 		entry.Phase = PhaseExecuted
+		// log.Printf("[Node %d] ENTRY UNLOCK 1.1",node.nodeId)
 		entry.mu.Unlock()
 
 		node.lastExecSeqNo = nextSeq
@@ -1995,6 +2008,7 @@ func(node *Node) HandlePromise(ctx context.Context,msg *pb.PromiseMessage) (*emp
 
 		// 4d. Install new log unto self
 		node.installMergedAcceptLog2(mergedLog,msg.Ballot,minSeq,maxSeq,true)
+		log.Printf("[Node %d] installMergedAcceptLog as leader complete: minSeq=%d maxSeq=%d, cleared entries beyond max", node.nodeId,minSeq, maxSeq)
 
 		// Note this is really critical
 		// node.performNeededAbortsAndRepairLocks(pendingAbortActions)
@@ -2463,7 +2477,7 @@ func(node *Node) installMergedAcceptLog2(mergedLog []*pb.AcceptedMessage,winning
 			}
 		} else {
 			entry.mu.Lock()
-
+			// log.Printf("[Node %d] ENTRY LOCK 3",node.nodeId)
 			if entry.Phase == PhaseAccepted {
 				if node.isBallotGreaterThan(winningBallot,entry.Ballot){
 					log.Printf("[Node %d] Updating ballot in seq=%d to (R:%d,N:%d)",node.nodeId,seq,winningBallot.RoundNumber,winningBallot.NodeId)
@@ -2528,12 +2542,12 @@ func(node *Node) installMergedAcceptLog2(mergedLog []*pb.AcceptedMessage,winning
 						entry.AcceptCount = 1
 					}
 
-					entry.mu.Unlock()
-				} else {
-					entry.mu.Unlock()
+					// entry.mu.Unlock()
 				}
 			}
 			
+			entry.mu.Unlock()
+			// log.Printf("[Node %d] ENTRY UNLOCK 3.1",node.nodeId)
 		}
 	}
 
@@ -2541,8 +2555,6 @@ func(node *Node) installMergedAcceptLog2(mergedLog []*pb.AcceptedMessage,winning
 
 	node.currentSeqNo = maxSeq
 	node.muLog.Unlock()
-
-	log.Printf("[Node %d] installMergedAcceptLog as backup complete: minSeq=%d maxSeq=%d, cleared entries beyond max", node.nodeId,minSeq, maxSeq)
 }
 
 
@@ -2802,18 +2814,23 @@ func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
 }
 
 func (node *Node) buildPendingRequestsQueue(highestCheckpointSeq int32){
-	node.muLog.RLock()
+	// log.Printf("[Node %d] [PendingQueue] log copy start", node.nodeId)
+	// node.muLog.RLock()
 
-	logCopy := make(map[int32]*LogEntry, len(node.acceptLog))
-	for seq, entry := range node.acceptLog {
-		logCopy[seq] = entry
-	}
+	// logCopy := make(map[int32]*LogEntry, len(node.acceptLog))
+	// for seq, entry := range node.acceptLog {
+	// 	logCopy[seq] = entry
+	// }
 
-	node.muLog.RUnlock()
+	// node.muLog.RUnlock()
+	// log.Printf("[Node %d] [PendingQueue] log copy end", node.nodeId)
 
 	pendingRequests := make(map[string]bool)
 
-	for _, entry := range logCopy {
+	// log.Printf("[Node %d] [PendingQueue] iterating log copy start", node.nodeId)
+
+	node.muLog.Lock()
+	for _, entry := range node.acceptLog {
 		// log.Printf("[Node %d] [PendingQueue] ... seq=%d has NULL digest. Skipping.",node.nodeId,)
 		entry.mu.Lock()
 
@@ -2822,7 +2839,8 @@ func (node *Node) buildPendingRequestsQueue(highestCheckpointSeq int32){
 		Timestamp := entry.Request.Timestamp
 		
 		entry.mu.Unlock()
-		
+		// log.Printf("[Node %d] [PendingQueue] Entry unlock", node.nodeId)
+
 		// IMPT Need to trust that state transfer will eventually update the last executed seq number
 		if SequenceNum <= highestCheckpointSeq{
 			continue
@@ -2842,7 +2860,9 @@ func (node *Node) buildPendingRequestsQueue(highestCheckpointSeq int32){
 			log.Printf("[Node %d] [PendingQueue] ... NOT EXECUTED. Added reqId=%s (seq=%d) to new pending list.", node.nodeId, reqId, SequenceNum)
 			pendingRequests[reqId] = true
 		}
+		// log.Printf("[Node %d] [PendingQueue] Entry end", node.nodeId)
 	}
+	node.muLog.Unlock()
 
 	log.Printf("[Node %d] [PendingQueue] Acquiring muPending lock to update node.pendingRequests...", node.nodeId)
 	// Actual update in the memory
@@ -3094,13 +3114,15 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
 
 	// 5. Install log
 	node.installMergedAcceptLog2(msg.AcceptLog,msg.Ballot,msg.MinSeq,msg.MaxSeq,false)
-
+	log.Printf("[Node %d] installMergedAcceptLog as backup complete: minSeq=%d maxSeq=%d, cleared entries beyond max", node.nodeId,msg.MinSeq, msg.MaxSeq)
 	// log.Printf("[Node %d] Performing abort actions start (backup) ",node.nodeId)
 	// // node.performNeededAbortsAndRepairLocks(pendingAbortActions)
 	// log.Printf("[Node %d] Performing abort actions complete (backup) ",node.nodeId)
 
+	// log.Printf("[Node %d] building pending reuqests new view",node.nodeId)
 	// 6. Build pending queue from new log
 	node.buildPendingRequestsQueue(highestCheckpointSeq)
+	// log.Printf("[Node %d] building pending reuqests complete new view",node.nodeId)
 
 	// 7. Drain queued requests
 	// node.drainQueuedRequests(msg.Ballot)
@@ -3665,6 +3687,8 @@ func(node *Node) HandleTwoPCPrepared(ctx context.Context,msg *pb.TwoPCPreparedMe
 		}
 
 		go node.broadcastAcceptMessage(updatedAcceptMessage)
+	} else {
+		existingEntry.mu.Unlock()
 	}
 
 	return &emptypb.Empty{},nil
@@ -3832,6 +3856,8 @@ func(node *Node) HandleTwoPCCommit(ctx context.Context, msg *pb.TwoPCCommitMessa
 		existingEntry.mu.Unlock()
 
 		go node.broadcastAcceptMessage(updatedAcceptMessage)
+	} else{
+		existingEntry.mu.Unlock()
 	}
 
 	return &emptypb.Empty{},nil
@@ -4147,6 +4173,8 @@ func(node *Node) handleTwoPcAbortAfterLeaderPresentInParticipantCluster( msg *pb
 			AcceptType: pb.AcceptType_ABORT,
 		}
 		go node.broadcastAcceptMessage(updatedAcceptMessage)
+	} else{
+		existingEntry.mu.Unlock()
 	}
 }
 

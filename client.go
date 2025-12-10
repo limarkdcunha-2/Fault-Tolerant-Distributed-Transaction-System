@@ -200,7 +200,7 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			pending.mu.Unlock()
 
 			if req.Transaction.Sender == req.Transaction.Receiver {
-				// log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
+				log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
 			} else {
 				// log.Printf("[Client] Received result=%s for (%s, %s, %d)",
 				// result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
@@ -298,22 +298,7 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
 	case <-pending.done:
 		pending.mu.Lock()
 		result := pending.reply.Status
-		pending.replyTime = timestamppb.Now()
-
-		var status string
-
-		if pending.isReadOnly {
-			status = fmt.Sprintf("(%s) : %s",pending.sender,pending.reply.Status)
-		} else {
-			status = fmt.Sprintf("(%s, %s, %d) : %s",pending.sender,pending.receiver,pending.amount,pending.reply.Status)
-		}
-		
-		client.replyTracker.Add(ReplyRecord{
-			Timestamp: time.Now().UnixNano(),
-			LeaderId: pending.reply.Ballot.NodeId,
-			Status: status,
-			ReqKey: makeRequestKey(pending.reply.ClientId,pending.reply.ClientRequestTimestamp),
-		})
+		// pending.replyTime = timestamppb.Now()
 		pending.mu.Unlock()
 		
 		return result, true
@@ -457,6 +442,22 @@ func (client *Client) HandleReply(ctx context.Context, reply *pb.ReplyMessage) (
 	// Store the reply
 	pending.reply = reply
 	pending.completed = true
+	pending.replyTime = timestamppb.Now()
+
+	var status string
+    if pending.isReadOnly {
+        status = fmt.Sprintf("(%s) : %s", pending.sender, reply.Status)
+    } else {
+        status = fmt.Sprintf("(%s, %s, %d) : %s", pending.sender, pending.receiver, pending.amount, reply.Status)
+    }
+
+    client.replyTracker.Add(ReplyRecord{
+        Timestamp: time.Now().UnixNano(),
+        LeaderId:  reply.Ballot.NodeId,
+        Status:    status,
+        ReqKey:    reqKey,
+    })
+
 	close(pending.done)
     
 	return &emptypb.Empty{}, nil

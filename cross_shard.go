@@ -303,7 +303,7 @@ func(node *Node) on2PCTimerExpired(req *pb.ClientRequest){
         AcceptType:  pb.AcceptType_ABORT,
     }
 
-	node.broadcastAcceptMessage(abortAccept)
+	go node.broadcastAcceptMessage(abortAccept)
 }
 
 

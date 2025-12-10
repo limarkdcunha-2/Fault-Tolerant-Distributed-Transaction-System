@@ -111,11 +111,11 @@ func (r *Runner) RunAllTestSets() {
 
         // Execute transactions
         start := time.Now()
-        r.ExecuteTestCase(tc)
+        countFired := r.ExecuteTestCase(tc)
         end := time.Since(start)
         log.Printf("[Runner] Total time elapsed %v",end)
         
-        r.showInteractiveMenu()
+        r.showInteractiveMenu(countFired)
         // r.PrintStatusAll()
     }
 
@@ -128,9 +128,9 @@ func (r *Runner) RunAllTestSets() {
     log.Println("[Runner] All sets complete.")
 }
 
-func (r *Runner) ExecuteTestCase(tc TestCase) {
-	log.Printf("[Runner] Executing %d transactions for Set %d...", len(tc.Transactions), tc.SetNumber)
-
+func (r *Runner) ExecuteTestCase(tc TestCase) (int) {
+	log.Printf("[Runner] Executing transactions for Set %d...", tc.SetNumber)
+    count :=0
 	batches := r.splitTransactionsIntoBatches(tc.Transactions)
 
    for _, batch := range batches {
@@ -150,6 +150,7 @@ func (r *Runner) ExecuteTestCase(tc TestCase) {
             var wg sync.WaitGroup
 
             for i, tx := range batch.transactions {
+                count++
                 wg.Add(1)
 
 				// Launch a goroutine for EVERY transaction
@@ -170,6 +171,7 @@ func (r *Runner) ExecuteTestCase(tc TestCase) {
     }
 
     log.Printf("[Runner] Finished all transactions for Set %d.", tc.SetNumber)
+    return count
 }
 
 func (r *Runner) splitTransactionsIntoBatches(transactions []TestTransaction) []TransactionBatch {
@@ -212,7 +214,7 @@ func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
     fmt.Println("║     BENCHMARK CONFIGURATION            ║")
     fmt.Println("╚════════════════════════════════════════╝")
 
-    // Number of transactions
+    // 1. Number of transactions
     fmt.Print("Number of transactions: ")
     numTxnsStr, _ := reader.ReadString('\n')
     numTxns, err := strconv.Atoi(strings.TrimSpace(numTxnsStr))
@@ -221,7 +223,7 @@ func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
         numTxns = 100
     }
 
-    // Read percentage
+    // 2. Read percentage
     fmt.Print("Read percentage (0.0-1.0, e.g., 0.5 for 50%): ")
     readPctStr, _ := reader.ReadString('\n')
     readPct, err := strconv.ParseFloat(strings.TrimSpace(readPctStr), 64)
@@ -230,7 +232,7 @@ func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
         readPct = 0.3
     }
 
-    // Intra-shard percentage
+    // 3. Intra-shard percentage
     fmt.Print("Intra-shard percentage (0.0-1.0, e.g., 0.7 for 70%): ")
     intraPctStr, _ := reader.ReadString('\n')
     intraPct, err := strconv.ParseFloat(strings.TrimSpace(intraPctStr), 64)
@@ -239,13 +241,26 @@ func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
         intraPct = 0.7
     }
 
-    // Skew
-    fmt.Print("Data skew (0.0=uniform, 0.99=highly skewed): ")
+    // 4. Skew (Probability of hitting the Hot Set)
+    fmt.Print("Traffic Skew Probability (0.0-1.0, e.g., 0.9 = 90% traffic to hot set): ")
     skewStr, _ := reader.ReadString('\n')
     skew, err := strconv.ParseFloat(strings.TrimSpace(skewStr), 64)
     if err != nil || skew < 0 || skew > 1 {
-        fmt.Println("Invalid input, using default: 0.0")
+        fmt.Println("Invalid input, using default: 0.0 (Uniform)")
         skew = 0.0
+    }
+
+    // 5. Hot Data Percentage (Size of the Hot Set) -- NEW ADDITION
+    hotPct := 0.10 // default
+    if skew > 0 {
+        fmt.Print("Hot Data Size (0.0-1.0, e.g., 0.1 = 10% of accounts are hot): ")
+        hotPctStr, _ := reader.ReadString('\n')
+        val, err := strconv.ParseFloat(strings.TrimSpace(hotPctStr), 64)
+        if err == nil && val > 0 && val <= 1 {
+            hotPct = val
+        } else {
+            fmt.Println("Invalid input, using default: 0.1 (10%)")
+        }
     }
 
     numClusters := int32(3) // default
@@ -258,14 +273,19 @@ func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
         ReadPct:         readPct,
         IntraPct:        intraPct,
         Skew:            skew,
+        HotDataPct:      hotPct, // Pass the new value here
     }
 
     fmt.Printf("\n✓ Generating %d transactions...\n", numTxns)
     bench := NewBenchmark(benchConfig)
     txns := bench.GenerateWorkload()
 
-    fmt.Printf("✓ Workload: %.0f%% reads, %.0f%% intra-shard, skew=%.2f\n",
-        readPct*100, intraPct*100, skew)
+    fmt.Printf("✓ Workload: %.0f%% reads, %.0f%% intra-shard\n", readPct*100, intraPct*100)
+    if skew > 0 {
+        fmt.Printf("✓ Skew: %.0f%% of traffic targets %.0f%% of accounts (Hot/Cold)\n", skew*100, hotPct*100)
+    } else {
+        fmt.Println("✓ Skew: Uniform distribution")
+    }
 
     return txns
 }
@@ -287,7 +307,7 @@ func (r *Runner) convertToTestTransactions(txns []Transaction) []TestTransaction
     return testTxns
 }
 
-func (r *Runner) showInteractiveMenu() {
+func (r *Runner) showInteractiveMenu(transactionCount int) {
     reader := bufio.NewReader(os.Stdin)
     
     for {
@@ -303,6 +323,7 @@ func (r *Runner) showInteractiveMenu() {
         // fmt.Println("7. Stop server timers")
         fmt.Println("8. View client side replies")
         fmt.Println("9. Proceed to next batch")
+        fmt.Println("10. Performance metrics")
         fmt.Println("========================================")
         fmt.Print("Enter choice (1-9): ")
 
@@ -341,7 +362,8 @@ func (r *Runner) showInteractiveMenu() {
         case "9":
             fmt.Println("\nProceeding to next batch...")
             return
-
+        case "10":
+            r.client.CalculatePerformance(transactionCount)
         default:
             fmt.Println("Invalid choice. Please enter 1-9.")
         }

@@ -7,96 +7,114 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 	"sync"
 )
 
-
 type BenchmarkConfig struct {
-    NumAccounts int32
-    NumClusters int32
-    NumTransactions int
-    ReadPct float64
-    IntraPct float64
-    Skew float64
+	NumAccounts     int32
+	NumClusters     int32
+	NumTransactions int
+	ReadPct         float64
+	IntraPct        float64
+
+	//0.9 - 90% of transactions go to the hot set.
+	Skew float64
+
+	// HotDataPct represents the size of the hot set (0.0 - 1.0).
+	// 0.1 means 10% of accounts are considered hot.
+	HotDataPct float64
 }
 
 type Benchmark struct {
-    config BenchmarkConfig
-    zipfGen *ZipfGenerator
-    mu sync.Mutex
+	config BenchmarkConfig
+	mu     sync.Mutex
+    rrCounter int32
 }
 
 func NewBenchmark(cfg BenchmarkConfig) *Benchmark {
-    zipf := NewZipfGenerator(int(cfg.NumAccounts), cfg.Skew)
-    return &Benchmark{
-        config:  cfg,
-        zipfGen: zipf,
-    }
+	// Set default hot data percentage if not specified but Skew is used
+	if cfg.Skew > 0 && cfg.HotDataPct == 0 {
+		cfg.HotDataPct = 0.10 // Default: 10% of data is hot
+	}
+
+	return &Benchmark{
+		config: cfg,
+	}
 }
 
 func (b *Benchmark) GenerateWorkload() []Transaction {
-    txns := make([]Transaction, 0, b.config.NumTransactions)
+	txns := make([]Transaction, 0, b.config.NumTransactions)
 
-    for i := 0; i < b.config.NumTransactions; i++ {
-        txns = append(txns, b.generateSingleTransaction())
-    }
+	for i := 0; i < b.config.NumTransactions; i++ {
+		txns = append(txns, b.generateSingleTransaction())
+	}
 
-    return txns
+	return txns
 }
 
 func (b *Benchmark) generateSingleTransaction() Transaction {
-    isRead := rand.Float64() < b.config.ReadPct
+	isRead := rand.Float64() < b.config.ReadPct
 
-    if isRead {
-        account := b.pickAccount()
-        return Transaction{
-            Sender:   fmt.Sprintf("%d", account),
-            Receiver: fmt.Sprintf("%d", account),
-            Amount:   0,                         
-        }
-    }
+	if isRead {
+		// Pick a single account using global range
+		account := b.pickAccountInRange(1, b.config.NumAccounts)
+		return Transaction{
+			Sender:   fmt.Sprintf("%d", account),
+			Receiver: fmt.Sprintf("%d", account),
+			Amount:   0,
+		}
+	}
 
-    isIntra := rand.Float64() < b.config.IntraPct
+	isIntra := rand.Float64() < b.config.IntraPct
 
-    if isIntra {
-        sender, receiver := b.pickIntraShardPair()
-        return Transaction{
-            Sender:   fmt.Sprintf("%d", sender),
-            Receiver: fmt.Sprintf("%d", receiver),
-            Amount:   int32(rand.Intn(100) + 1),
-        }
-    }
+	if isIntra {
+		sender, receiver := b.pickIntraShardPair()
+		return Transaction{
+			Sender:   fmt.Sprintf("%d", sender),
+			Receiver: fmt.Sprintf("%d", receiver),
+			Amount:   int32(rand.Intn(100) + 1),
+		}
+	}
 
-    sender, receiver := b.pickCrossShardPair()
-    return Transaction{
-        Sender:   fmt.Sprintf("%d", sender),
-        Receiver: fmt.Sprintf("%d", receiver),
-        Amount:   int32(rand.Intn(100) + 1),
-    }
-}
-
-func (b *Benchmark) pickAccount() int32 {
-    b.mu.Lock()
-    defer b.mu.Unlock()
-    return int32(b.zipfGen.Next()) + 1
+	sender, receiver := b.pickCrossShardPair()
+	return Transaction{
+		Sender:   fmt.Sprintf("%d", sender),
+		Receiver: fmt.Sprintf("%d", receiver),
+		Amount:   int32(rand.Intn(100) + 1),
+	}
 }
 
 func (b *Benchmark) pickIntraShardPair() (int32, int32) {
-    clusterId := rand.Int31n(b.config.NumClusters) + 1
+    var clusterId int32
 
+    // 1. DETERMINE CLUSTER
+    if b.config.Skew == 0 {
+        // ROUND-ROBIN: Guarantees exact 1000/1000/1000 distribution
+        b.mu.Lock()
+        clusterId = (b.rrCounter % b.config.NumClusters) + 1
+        b.rrCounter++
+        b.mu.Unlock()
+    } else {
+        // RANDOM: Needed for skewed workloads to avoid pattern artifacts
+        clusterId = rand.Int31n(b.config.NumClusters) + 1
+    }
+
+    // 2. DETERMINE ACCOUNTS IN CLUSTER
     itemsPerShard := b.config.NumAccounts / b.config.NumClusters
     startId := (clusterId-1)*itemsPerShard + 1
     endId := clusterId * itemsPerShard
 
+    // Handle remainder for last cluster
     if clusterId == b.config.NumClusters {
         endId = b.config.NumAccounts
     }
 
+    // 3. PICK SENDER/RECEIVER (Using Hot/Cold Logic)
     sender := b.pickAccountInRange(startId, endId)
     receiver := b.pickAccountInRange(startId, endId)
 
+    // Retry if same (simple spin lock)
     for receiver == sender {
         receiver = b.pickAccountInRange(startId, endId)
     }
@@ -105,9 +123,18 @@ func (b *Benchmark) pickIntraShardPair() (int32, int32) {
 }
 
 func (b *Benchmark) pickCrossShardPair() (int32, int32) {
-    c1 := rand.Int31n(b.config.NumClusters) + 1
-    c2 := rand.Int31n(b.config.NumClusters) + 1
+    var c1 int32
 
+    if b.config.Skew == 0 {
+        b.mu.Lock()
+        c1 = (b.rrCounter % b.config.NumClusters) + 1
+        b.rrCounter++
+        b.mu.Unlock()
+    } else {
+        c1 = rand.Int31n(b.config.NumClusters) + 1
+    }
+
+    c2 := rand.Int31n(b.config.NumClusters) + 1
     for c2 == c1 {
         c2 = rand.Int31n(b.config.NumClusters) + 1
     }
@@ -116,16 +143,12 @@ func (b *Benchmark) pickCrossShardPair() (int32, int32) {
 
     start1 := (c1-1)*itemsPerShard + 1
     end1 := c1 * itemsPerShard
-    if c1 == b.config.NumClusters {
-        end1 = b.config.NumAccounts
-    }
+    if c1 == b.config.NumClusters { end1 = b.config.NumAccounts }
     sender := b.pickAccountInRange(start1, end1)
 
     start2 := (c2-1)*itemsPerShard + 1
     end2 := c2 * itemsPerShard
-    if c2 == b.config.NumClusters {
-        end2 = b.config.NumAccounts
-    }
+    if c2 == b.config.NumClusters { end2 = b.config.NumAccounts }
     receiver := b.pickAccountInRange(start2, end2)
 
     return sender, receiver
@@ -133,73 +156,37 @@ func (b *Benchmark) pickCrossShardPair() (int32, int32) {
 
 func (b *Benchmark) pickAccountInRange(start, end int32) int32 {
     rangeSize := end - start + 1
+    if rangeSize <= 0 {
+        return start
+    }
 
-    if b.config.Skew == 0.0 {
+    // A. Uniform Distribution
+    if b.config.Skew <= 0.0 {
         return start + rand.Int31n(rangeSize)
     }
 
-    b.mu.Lock()
-    localZipf := NewZipfGenerator(int(rangeSize), b.config.Skew)
-    offset := int32(localZipf.Next())
-    b.mu.Unlock()
-
-    return start + offset
-}
-
-
-type ZipfGenerator struct {
-    n int
-    theta float64 
-    zetan float64 
-    alpha float64
-    eta float64
-}
-
-func NewZipfGenerator(n int, theta float64) *ZipfGenerator {
-    zg := &ZipfGenerator{
-        n:     n,
-        theta: theta,
-        alpha: 1.0 / (1.0 - theta),
+    // B. Hot/Cold Distribution (10% items get 90% traffic)
+    // 1. Calculate size of the Hot Set
+    numHot := int32(float64(rangeSize) * b.config.HotDataPct)
+    if numHot < 1 {
+        numHot = 1
     }
 
-    zg.zetan = zg.zeta(n, theta)
-    zg.eta = (1 - math.Pow(2.0/float64(n), 1-theta)) / (1 - zg.zeta(2, theta)/zg.zetan)
+    // 2. Decide if this transaction is Hot or Cold
+    isHotTx := rand.Float64() < b.config.Skew
 
-    return zg
-}
-
-func (zg *ZipfGenerator) zeta(n int, theta float64) float64 {
-    sum := 0.0
-    for i := 1; i <= n; i++ {
-        sum += 1.0 / math.Pow(float64(i), theta)
+    if isHotTx {
+        // Pick uniformly from the HOT set (Start of range)
+        offset := rand.Int31n(numHot)
+        return start + offset
+    } else {
+        // Pick uniformly from the COLD set (Rest of range)
+        numCold := rangeSize - numHot
+        if numCold < 1 {
+            offset := rand.Int31n(numHot)
+            return start + offset
+        }
+        offset := rand.Int31n(numCold)
+        return start + numHot + offset
     }
-    return sum
-}
-
-func (zg *ZipfGenerator) Next() int {
-    if zg.theta == 0.0 {
-        return rand.Intn(zg.n)
-    }
-
-    u := rand.Float64()
-    uz := u * zg.zetan
-
-    if uz < 1.0 {
-        return 0
-    }
-
-    if uz < 1.0+math.Pow(0.5, zg.theta) {
-        return 1
-    }
-
-    result := int(float64(zg.n) * math.Pow(zg.eta*u-zg.eta+1, zg.alpha))
-    
-    if result >= zg.n {
-        result = zg.n - 1
-    }
-    if result < 0 {
-        result = 0
-    }
-
-    return result
 }

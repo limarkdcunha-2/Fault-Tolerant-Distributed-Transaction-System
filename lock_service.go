@@ -134,6 +134,35 @@ func (node *Node) releaseTransactionLocks(sender, receiver string) {
     entry1.mu.Unlock()
 }
 
+// Helper to check lock status without acquiring
+func (node *Node) areDatapointsLocked(sender, receiver string) bool {
+    // Check Sender
+    idx1 := node.getLockIndex(sender)
+    if idx1 != 0 {
+        entry1 := node.locks[idx1]
+        entry1.mu.Lock()
+        isLocked := entry1.holder != ""
+        entry1.mu.Unlock()
+        
+        if isLocked { return true }
+    }
+
+    // Check Receiver
+    if receiver != sender {
+        idx2 := node.getLockIndex(receiver)
+        if idx2 != 0 {
+            entry2 := node.locks[idx2]
+            entry2.mu.Lock()
+            isLocked := entry2.holder != ""
+            entry2.mu.Unlock()
+            
+            if isLocked { return true }
+        }
+    }
+
+    return false
+}
+
 func keyUpperBound(b []byte) []byte {
 	end := make([]byte, len(b))
 	copy(end, b)

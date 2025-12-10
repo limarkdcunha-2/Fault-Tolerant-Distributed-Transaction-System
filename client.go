@@ -30,7 +30,15 @@ type PendingRequest struct {
 	completed    bool
 	sender string
 	receiver string 
-	amount int32                      
+	amount int32
+	startTime *timestamppb.Timestamp   
+	replyTime *timestamppb.Timestamp                     
+}
+
+type TransactionRecord struct {
+    StartTime time.Time
+    EndTime   time.Time
+    IsSuccess bool
 }
 
 type Client struct {
@@ -53,6 +61,9 @@ type Client struct {
     stopped  bool
 
 	replyTracker *ReplyTracker
+
+	muPerf sync.RWMutex
+	performanceMeasureMap map[string]*TransactionRecord
 }
 
 
@@ -62,6 +73,7 @@ func NewClient(port int) (*Client, error) {
 		serverConns: make(map[int32]*grpc.ClientConn),
 		pendingReqs: make(map[string]*PendingRequest),
 		clusterInfo: make(map[int32]*ClusterInfo),
+		performanceMeasureMap: make(map[string]*TransactionRecord),
 		stopChan: make(chan struct{}),
         stopped: false, 
 		replyTracker: NewReplyTracker(),
@@ -271,6 +283,7 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
     pending.mu.Lock()
     if pending.completed {
 		result := pending.reply.Status
+		// pending.replyTime = timestamppb.Now()
         pending.mu.Unlock()
         return result, true
     }
@@ -283,6 +296,7 @@ func (client *Client) waitForReply(pending *PendingRequest, timeout time.Duratio
 	case <-pending.done:
 		pending.mu.Lock()
 		result := pending.reply.Status
+		pending.replyTime = timestamppb.Now()
 
 		var status string
 
@@ -332,6 +346,7 @@ func (client *Client) createPendingRequest(timestamp *timestamppb.Timestamp,isRe
 		sender: sender,
 		receiver: receiver,
 		amount: amount,
+		startTime: timestamppb.Now(),
 	}
 }
 
@@ -353,6 +368,23 @@ func (client *Client) registerRequest(datapoint int32, timestamp *timestamppb.Ti
 
 func (client *Client) cleanupRequest(reqKey string) {
 	client.muPending.Lock()
+	client.muPerf.Lock()
+
+	if pending, exists := client.pendingReqs[reqKey]; exists && pending.replyTime != nil{
+		start := pending.startTime.AsTime()
+		end := pending.replyTime.AsTime()
+
+		record := &TransactionRecord{
+            StartTime: start,
+            EndTime:   end,
+            IsSuccess: pending.completed,
+        }
+
+		client.performanceMeasureMap[reqKey] = record
+	}
+
+	client.muPerf.Unlock()
+
 	delete(client.pendingReqs, reqKey)
 	client.muPending.Unlock()
 }
@@ -458,4 +490,60 @@ func (client *Client) closeAllConnections() {
 			conn.Close()
 		}
 	}
+}
+
+
+func (client *Client) CalculatePerformance(txCount int) {
+    client.muPerf.RLock()
+    defer client.muPerf.RUnlock()
+
+    count := len(client.performanceMeasureMap)
+    if count == 0 {
+        fmt.Println("\n[Performance] No completed requests found to calculate metrics.")
+        return
+    }
+
+    var minStart, maxEnd time.Time
+    var totalLatency time.Duration
+    first := true
+
+    for _, rec := range client.performanceMeasureMap {
+        if first {
+            minStart = rec.StartTime
+            maxEnd = rec.EndTime
+            first = false
+        }
+
+        if rec.StartTime.Before(minStart) {
+            minStart = rec.StartTime
+        }
+        
+        if rec.EndTime.After(maxEnd) {
+            maxEnd = rec.EndTime
+        }
+
+        totalLatency += rec.EndTime.Sub(rec.StartTime)
+    }
+
+    experimentLength := maxEnd.Sub(minStart)
+
+    throughput := 0.0
+    if experimentLength.Seconds() > 0 {
+        throughput = float64(txCount) / experimentLength.Seconds()
+    }
+
+    // Avg Latency = TotalLatency / Count
+    avgLatency := totalLatency / time.Duration(txCount)
+
+    fmt.Println("\n=============================================")
+    fmt.Println("          PERFORMANCE METRICS                ")
+    fmt.Println("=============================================")
+    fmt.Printf("Total Completed Req: %d\n", count)
+    fmt.Printf("Experiment Start:    %s\n", minStart.Format("15:04:05.000"))
+    fmt.Printf("Experiment End:      %s\n", maxEnd.Format("15:04:05.000"))
+    fmt.Printf("Experiment Length:   %v\n", experimentLength)
+    fmt.Println("---------------------------------------------")
+    fmt.Printf("THROUGHPUT:          %.2f Req/Sec\n", throughput)
+    fmt.Printf("AVG LATENCY:         %v\n", avgLatency)
+    fmt.Println("=============================================\n")
 }

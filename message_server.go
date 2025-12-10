@@ -24,14 +24,14 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
         return &emptypb.Empty{}, nil
     }
 
-	log.Printf("[Node %d] Received client request from Client %d (ts=%s) (%s, %s, %d)",
-        node.nodeId, req.ClientId, req.Timestamp.AsTime(),
-        req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
+	// log.Printf("[Node %d] Received client request from Client %d (ts=%s) (%s, %s, %d)",
+    //     node.nodeId, req.ClientId, req.Timestamp.AsTime(),
+    //     req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
 
 	node.muBallot.RLock()
 	currentBallot := node.deepCopyBallot(node.promisedBallotAccept)
-	log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",
-	node.nodeId,currentBallot.RoundNumber,currentBallot.NodeId)
+	// log.Printf("[Node %d] Ballot number for me: (R:%d,N:%d)",
+	// node.nodeId,currentBallot.RoundNumber,currentBallot.NodeId)
 	node.muBallot.RUnlock()
 
 	isReqReadOnly := isReadOnly(req)
@@ -88,7 +88,7 @@ func (node *Node) SendRequestMessage(ctx context.Context, req *pb.ClientRequest)
 
 func(node *Node) handleReadOnlyRequest(req *pb.ClientRequest, ballot *pb.BallotNumber){
 	if node.nodeId != ballot.NodeId {
-		node.peers[ballot.NodeId].SendRequestMessage(context.Background(),req)
+		go node.peers[ballot.NodeId].SendRequestMessage(context.Background(),req)
 		return
 	}
 
@@ -158,7 +158,24 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, ballot *pb.Ballo
         return
     }
 
+	// Hack check
+	if node.areDatapointsLocked(req.Transaction.Sender, req.Transaction.Receiver) {
+		log.Printf("[Node %d] Backup Rejection: Locks held for (%s, %s). Dropping request.", 
+			node.nodeId, req.Transaction.Sender, req.Transaction.Receiver)
+		return
+	}
+	
+
 	reqKey := makeRequestKey(req.ClientId, req.Timestamp)
+	
+	// node.muPending.RLock()
+	// _, isPending1 := node.pendingRequests[reqKey]
+	// node.muPending.RUnlock()
+
+	// // Just a hack
+	// if isPending1 {
+	// 	return
+	// }
 
 	// 2. Check pending requests (assigned seq but not executed)
 	node.muPending.Lock()
@@ -183,7 +200,7 @@ func(node *Node) handleIntraShardRequest(req *pb.ClientRequest, ballot *pb.Ballo
 			node.livenessTimer.Start()
 		}
 		
-		node.peers[ballot.NodeId].SendRequestMessage(context.Background(),req)
+		go node.peers[ballot.NodeId].SendRequestMessage(context.Background(),req)
 		return
 	}
 
@@ -269,7 +286,7 @@ func(node *Node) handleCrossShardRequest(req *pb.ClientRequest,ballot *pb.Ballot
 			node.livenessTimer.Start()
 		}
 		
-		node.peers[leaderId].SendRequestMessage(context.Background(),req)
+		go node.peers[leaderId].SendRequestMessage(context.Background(),req)
 		return
 	}
 
@@ -1700,9 +1717,29 @@ func (node *Node) executeInOrder(isLeader bool) {
     }
 
 	if len(locksToRelease) > 0 {
-        for _, pair := range locksToRelease {
-            node.releaseTransactionLocks(pair.sender, pair.receiver)
-        }
+        go func(locks []lockReleasePair) {
+            numWorkers := 8
+            chunkSize := (len(locks) + numWorkers - 1) / numWorkers
+
+            for i := 0; i < numWorkers; i++ {
+                start := i * chunkSize
+                end := start + chunkSize
+                if start >= len(locks) { break }
+                if end > len(locks) { end = len(locks) }
+
+                go func(chunk []lockReleasePair) {
+                    for _, pair := range chunk {
+                        node.releaseLock(pair.sender)
+                        
+                        if pair.receiver != pair.sender {
+                            node.releaseLock(pair.receiver)
+                        }
+                    }
+                }(locks[start:end])
+            }
+            
+            // log.Printf("[Node %d] Released %d locks in background", node.nodeId, len(locks))
+        }(locksToRelease)
 
 		log.Printf("[Node %d] Released %d transaction locks after execution", node.nodeId, len(locksToRelease))
     }

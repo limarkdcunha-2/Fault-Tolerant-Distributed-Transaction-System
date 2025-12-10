@@ -202,8 +202,8 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			if req.Transaction.Sender == req.Transaction.Receiver {
 				log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
 			} else {
-				// log.Printf("[Client] Received result=%s for (%s, %s, %d)",
-				// result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+				log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+				result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 			}
 			
 			
@@ -224,10 +224,10 @@ func (client *Client) SendTransaction(tx Transaction) string {
 			pending.mu.Unlock()
 			
 			if req.Transaction.Sender == req.Transaction.Receiver {
-				// log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
+				log.Printf("[Client] Received result=%s for (%s)",result,req.Transaction.Sender)
 			} else {
-				// log.Printf("[Client] Received result=%s for (%s, %s, %d)",
-				// result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
+				log.Printf("[Client] Received result=%s for (%s, %s, %d)",
+				result,req.Transaction.Sender,req.Transaction.Receiver,req.Transaction.Amount)
 			}
 
 			return result

@@ -381,7 +381,7 @@ func(node *Node) initiateConsensusRound(req *pb.ClientRequest, acceptType pb.Acc
 		node.muCrossSharTxs.Lock()
 
 		reqKey := makeRequestKey(req.ClientId,req.Timestamp)
-		reqTimer := NewCustomTimer(450 * time.Millisecond,func() {
+		reqTimer := NewCustomTimer(700 * time.Millisecond,func() {
 			node.on2PCTimerExpired(req) 
 		})
 
@@ -2994,7 +2994,7 @@ func(node *Node) buildCrossShardQueue(highestCheckpointSeq int32){
             SequenceNum: SequenceNum,
             Ballot: Ballot,
             Request: Request,
-            Timer: NewCustomTimer(450 * time.Millisecond,func() {
+            Timer: NewCustomTimer(700 * time.Millisecond,func() {
 				node.on2PCTimerExpired(Request) 
 			}), 
             shouldKeepSendingCommmit: true, 

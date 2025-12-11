@@ -4345,6 +4345,10 @@ func (node *Node) ResetTimer(ctx context.Context, req *emptypb.Empty) (*emptypb.
 		node.livenessTimer.Stop()
 	}
 
+	if node.prepareTimer.IsRunning(){
+		node.prepareTimer.Stop()
+	}
+
 	log.Printf("[Node %d] TIMER STOP complete", node.nodeId)
 
 	node.muForce.Lock()

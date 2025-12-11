@@ -55,6 +55,8 @@ const (
 	MessageService_ResetTimer_FullMethodName                    = "/message.MessageService/ResetTimer"
 	MessageService_GetViewHistory_FullMethodName                = "/message.MessageService/GetViewHistory"
 	MessageService_PrintDB_FullMethodName                       = "/message.MessageService/PrintDB"
+	MessageService_EnableCheckpointing_FullMethodName           = "/message.MessageService/EnableCheckpointing"
+	MessageService_ResetNode_FullMethodName                     = "/message.MessageService/ResetNode"
 )
 
 // MessageServiceClient is the client API for MessageService service.
@@ -89,6 +91,8 @@ type MessageServiceClient interface {
 	ResetTimer(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetViewHistory(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ViewHistoryResponse, error)
 	PrintDB(ctx context.Context, in *PrintDBRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	EnableCheckpointing(ctx context.Context, in *CheckpointReq, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ResetNode(ctx context.Context, in *ResetNodeMesage, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type messageServiceClient struct {
@@ -369,6 +373,26 @@ func (c *messageServiceClient) PrintDB(ctx context.Context, in *PrintDBRequest, 
 	return out, nil
 }
 
+func (c *messageServiceClient) EnableCheckpointing(ctx context.Context, in *CheckpointReq, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_EnableCheckpointing_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) ResetNode(ctx context.Context, in *ResetNodeMesage, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_ResetNode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MessageServiceServer is the server API for MessageService service.
 // All implementations must embed UnimplementedMessageServiceServer
 // for forward compatibility.
@@ -401,6 +425,8 @@ type MessageServiceServer interface {
 	ResetTimer(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
 	GetViewHistory(context.Context, *emptypb.Empty) (*ViewHistoryResponse, error)
 	PrintDB(context.Context, *PrintDBRequest) (*emptypb.Empty, error)
+	EnableCheckpointing(context.Context, *CheckpointReq) (*emptypb.Empty, error)
+	ResetNode(context.Context, *ResetNodeMesage) (*emptypb.Empty, error)
 	mustEmbedUnimplementedMessageServiceServer()
 }
 
@@ -491,6 +517,12 @@ func (UnimplementedMessageServiceServer) GetViewHistory(context.Context, *emptyp
 }
 func (UnimplementedMessageServiceServer) PrintDB(context.Context, *PrintDBRequest) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PrintDB not implemented")
+}
+func (UnimplementedMessageServiceServer) EnableCheckpointing(context.Context, *CheckpointReq) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EnableCheckpointing not implemented")
+}
+func (UnimplementedMessageServiceServer) ResetNode(context.Context, *ResetNodeMesage) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResetNode not implemented")
 }
 func (UnimplementedMessageServiceServer) mustEmbedUnimplementedMessageServiceServer() {}
 func (UnimplementedMessageServiceServer) testEmbeddedByValue()                        {}
@@ -999,6 +1031,42 @@ func _MessageService_PrintDB_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_EnableCheckpointing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckpointReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).EnableCheckpointing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_EnableCheckpointing_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).EnableCheckpointing(ctx, req.(*CheckpointReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_ResetNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetNodeMesage)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).ResetNode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_ResetNode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).ResetNode(ctx, req.(*ResetNodeMesage))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MessageService_ServiceDesc is the grpc.ServiceDesc for MessageService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1113,6 +1181,14 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PrintDB",
 			Handler:    _MessageService_PrintDB_Handler,
+		},
+		{
+			MethodName: "EnableCheckpointing",
+			Handler:    _MessageService_EnableCheckpointing_Handler,
+		},
+		{
+			MethodName: "ResetNode",
+			Handler:    _MessageService_ResetNode_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

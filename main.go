@@ -8,6 +8,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 
 	"log"
 	"net"
@@ -72,15 +73,15 @@ func spawnAllNodes() {
 
 func runNode(nodeID, port string) {
 	fmt.Printf("\n[Running] NodeID=%s Port =%s\n", nodeID, port)
-	// log.SetOutput(io.Discard)
+	log.SetOutput(io.Discard)
 
-	file, err := os.OpenFile(fmt.Sprintf("logs/node%s.log",nodeID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
+	// file, err := os.OpenFile(fmt.Sprintf("logs/node%s.log",nodeID), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// defer file.Close()
 
-	log.SetOutput(file)
+	// log.SetOutput(file)
 
 	nodeIdInt,_ :=strconv.Atoi(nodeID)
 	portNumber,_ := strconv.Atoi(port)

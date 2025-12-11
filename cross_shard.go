@@ -331,7 +331,7 @@ func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
 			}
 		}
 
-		time.Sleep(10*time.Millisecond)
+		time.Sleep(100*time.Millisecond)
 
 		if !node.shouldKeepSendingAbort(msg.Request){
 			break
@@ -358,6 +358,6 @@ func(node *Node) sendTwoPCAbortToParticipant(msg *pb.TwoPCAbortMessage){
 			}(nodeId, peerClient)
 		}
 
-		time.Sleep(10*time.Millisecond)
+		time.Sleep(100*time.Millisecond)
 	}
 }

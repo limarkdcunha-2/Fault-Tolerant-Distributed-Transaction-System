@@ -161,7 +161,8 @@ type Node struct {
 	muCheckpoint sync.RWMutex
 	checkpointInterval int32
 	latestCheckpointMessage *pb.CheckpointMessage
-	lastStableSnapshot     *pebble.Snapshot
+	lastStableSnapshot *pebble.Snapshot
+	enableCheckpointing bool
 
 	muCluster sync.RWMutex
 	clusterId int32
@@ -251,7 +252,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		twoPcPrepareQueue: make([]*pb.TwoPCPrepareMessage, 0),
 		shardMap: make(map[string]int32),
 		forceStopCommitAndAbort: false,
-		// locks: make(map[string]string),
+		enableCheckpointing: false,
 	}
 
 	randomTime := time.Duration(rand.Intn(400)+200) * time.Millisecond
@@ -280,7 +281,6 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 	wal, _ := NewWriteAheadLog(nodeId, dataDir)
 	newNode.wal = wal
 
-	
 	newNode.buildClusterMap()
 
 	// Building gprc connections
@@ -310,11 +310,16 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 
 func (node *Node) runReplyWorker() {
     for reply := range node.replyQueue {
+		if !node.isActive() {
+			log.Printf("[Node %d] Inactive so no sending reply",node.nodeId)
+            continue
+        }
         node.sendReplyToClient(reply) 
     }
 }
 
 
+// First default shard distribution
 func (node *Node) initializeShardMap() {
     node.muShardMap.Lock()
     defer node.muShardMap.Unlock()
@@ -401,6 +406,16 @@ func (node *Node) GetCachedReply(clientId int32, timestamp  *timestamppb.Timesta
 	defer node.muReplies.RUnlock()
 
 	reply, exists := node.replies[key]
+	return reply, exists
+}
+
+func (node *Node) GetCachedReplyCrossShard(clientId int32, timestamp  *timestamppb.Timestamp) (*pb.ReplyMessage, bool) {
+	key := makeRequestKey(clientId, timestamp)
+
+	node.muPendingAckReplies.RLock()
+	defer node.muPendingAckReplies.RUnlock()
+
+	reply, exists := node.pendingAckReplies[key]
 	return reply, exists
 }
 

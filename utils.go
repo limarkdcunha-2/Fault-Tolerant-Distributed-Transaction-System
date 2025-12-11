@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	pb "transaction-processor/message"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -99,13 +98,7 @@ func (node *Node) getAllClusterNodes() []int32 {
 }
 
 func (node *Node) updateLeaderIfNeededForCluster(sender string,leaderIdFromMsg int32){
-    senderIntVal, err := strconv.Atoi(sender) 
-    if err != nil {
-        log.Printf("[Node %d] Failed to convert value of client sender from string to int",node.nodeId)
-        return
-    }
-
-    clusterId := getClusterId(int32(senderIntVal))
+    clusterId := node.getAccountCluster(sender)
 
     node.muCluster.Lock()
     defer node.muCluster.Unlock()
@@ -215,32 +208,32 @@ func isReadOnly(req *pb.ClientRequest) bool{
     return req.Transaction.Sender == req.Transaction.Receiver
 }
 
-func isIntraShard(req *pb.ClientRequest) bool {
+func (node *Node) isIntraShard(req *pb.ClientRequest) bool {
     if req == nil || req.Transaction == nil {
         return false
     }
 
-    senderInt, _ := strconv.ParseInt(req.Transaction.Sender, 10, 0)
-    receiverInt, _ := strconv.ParseInt(req.Transaction.Receiver, 10, 0)
-
-    senderCluster := getClusterId(int32(senderInt))
-    receiverCluster := getClusterId(int32(receiverInt))
+    senderCluster := node.getAccountCluster(req.Transaction.Sender)
+    receiverCluster := node.getAccountCluster(req.Transaction.Receiver)
     
     return senderCluster == receiverCluster
 }
 
-func datapointInShard(datapoint string,clusterId int32) bool{
-    datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
+func(node *Node) datapointInShard(datapoint string,clusterId int32) bool{
+    node.muShardMap.RLock()
+    defer node.muShardMap.RUnlock()
     
-    targetClusterId := getClusterId(int32(datapointInt))
+    targetClusterId, exists := node.shardMap[datapoint]
+
+    if !exists {
+        return false
+    }
 
     return targetClusterId == clusterId
 }
 
-func(node *Node) findTargetLeaderId(datapoint string) (int32) {
-    datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
-    
-    targetClusterId := getClusterId(int32(datapointInt))
+func(node *Node) findTargetLeaderId(datapoint string) (int32) {    
+    targetClusterId := node.getAccountCluster(datapoint)
     // log.Printf("[Node %d] target cluster Id=%d",node.nodeId,targetClusterId)
 
     node.muCluster.RLock()
@@ -250,10 +243,8 @@ func(node *Node) findTargetLeaderId(datapoint string) (int32) {
     return targetLeaderId
 }
 
-func(node *Node) findTargetClusterIds(datapoint string) []int32 {
-    datapointInt, _ := strconv.ParseInt(datapoint, 10, 0)
-    
-    targetClusterId := getClusterId(int32(datapointInt))
+func(node *Node) findTargetClusterIds(datapoint string) []int32 {    
+    targetClusterId := node.getAccountCluster(datapoint)
     // log.Printf("[Node %d] target cluster Id=%d",node.nodeId,targetClusterId)
 
     node.muCluster.RLock()
@@ -387,7 +378,6 @@ func (node *Node) PrintAcceptLogUtil() {
         sequenceNum := entry.SequenceNum
         ballotRound := entry.Ballot.RoundNumber
         ballotNodeId := entry.Ballot.NodeId
-        entryStatus := entry.Status
         req := entry.Request
         acceptType := entry.EntryAcceptType
         entry.mu.Unlock()
@@ -415,12 +405,12 @@ func (node *Node) PrintAcceptLogUtil() {
 
         // Format and print based on request type
         if req != nil {
-			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | AcceptType=%s | 1st R Status=%s | 2nd R Status=%s | (%s, %s, %d)\n",
-				sequenceNum, ballotRound,ballotNodeId, entryStatus,acceptType,status,twoPCStatus,
+			fmt.Printf("  Seq=%d | Ballot R=%d N=%d | AcceptType=%s | 1st R Status=%s | 2nd R Status=%s | (%s, %s, %d)\n",
+				sequenceNum, ballotRound,ballotNodeId,acceptType,status,twoPCStatus,
 				req.Transaction.Sender, req.Transaction.Receiver, req.Transaction.Amount)
         } else {
-            fmt.Printf("  Seq=%d | Ballot R=%d N=%d | Entry status=%s | AcceptType=%s | Request status=%s | NO-OP\n",
-                sequenceNum, ballotRound,ballotNodeId,entryStatus,acceptType, status)
+            fmt.Printf("  Seq=%d | Ballot R=%d N=%d | AcceptType=%s | Request status=%s | NO-OP\n",
+                sequenceNum, ballotRound,ballotNodeId,acceptType, status)
         }
     }
     

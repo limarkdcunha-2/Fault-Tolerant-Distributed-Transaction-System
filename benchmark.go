@@ -57,7 +57,6 @@ func (b *Benchmark) generateSingleTransaction() Transaction {
 	isRead := rand.Float64() < b.config.ReadPct
 
 	if isRead {
-		// Pick a single account using global range
 		account := b.pickAccountInRange(1, b.config.NumAccounts)
 		return Transaction{
 			Sender:   fmt.Sprintf("%d", account),

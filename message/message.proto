@@ -180,6 +180,14 @@ message PrintDBRequest {
   repeated string involved_keys = 1; 
 }
 
+message CheckpointReq{
+  bool enable = 1;
+}
+
+message ResetNodeMesage {
+  bool shouldResetSharding = 1;
+}
+
 service MessageService {
   rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
   rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
@@ -214,6 +222,8 @@ service MessageService {
   rpc ResetTimer(google.protobuf.Empty) returns (google.protobuf.Empty);
   rpc GetViewHistory(google.protobuf.Empty) returns (ViewHistoryResponse);
   rpc PrintDB(PrintDBRequest) returns (google.protobuf.Empty);
+  rpc EnableCheckpointing(CheckpointReq) returns (google.protobuf.Empty);
+  rpc ResetNode(ResetNodeMesage) returns (google.protobuf.Empty);
 }
 
 service ClientService {

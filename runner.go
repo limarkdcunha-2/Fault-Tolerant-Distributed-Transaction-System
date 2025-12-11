@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"slices"
@@ -34,6 +35,8 @@ type Runner struct {
 	txHistory []TransactionEdge
 	maxTxHistory int
 	currentShardMap map[string]int32
+
+    isResharded bool
 }
 
 type TransactionBatch struct {
@@ -63,19 +66,18 @@ func NewRunner() *Runner {
     }
 
     // Extra code just placing it here
-    logFile, err := os.OpenFile("runnerlog.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-    if err != nil {
-        log.Fatalf("Failed to open clientlog.log: %v", err)
-    }
+    // logFile, err := os.OpenFile("runnerlog.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+    // if err != nil {
+    //     log.Fatalf("Failed to open clientlog.log: %v", err)
+    // }
 
-    // Set log output to file
-    log.SetOutput(logFile)
-    // log.SetOutput(io.Discard)
+    // // Set log output to file
+    // log.SetOutput(logFile)
+    log.SetOutput(io.Discard)
 
     return runner
 }
 
-// TO DO automate this
 func (r *Runner) initializeShardMap() {
 	r.muTxHistory.Lock()
 	defer r.muTxHistory.Unlock()
@@ -122,11 +124,42 @@ func (r *Runner) RunAllTestSets() {
     reader := bufio.NewReader(os.Stdin)
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        // if setNum != 9 {
+        // if setNum < 9{
         //     continue
         // }
 
         tc := r.testCases[setNum]
+
+        if r.isResharded {
+            fmt.Println(" Past Resharding is currently ACTIVE")
+            fmt.Println("1. Persist (Keep current optimized sharding)")
+            fmt.Println("2. Reset   (Revert to default sharding)")
+            fmt.Print("\nEnter choice: ")
+
+            rsChoice, _ := reader.ReadString('\n')
+            rsChoice = strings.TrimSpace(rsChoice)
+            
+            if rsChoice == "2" {
+                fmt.Println("[Runner] Resetting to default shard map...")
+                r.initializeShardMap()
+                
+                r.client.UpdateShardMap(r.currentShardMap)
+
+                // This will be taken care of in CleanupAfterSet function
+                // r.broadcastShardMap(r.currentShardMap)
+                
+                r.isResharded = false
+                fmt.Println("[Runner] System reset to default configuration.")
+            } else {
+                fmt.Println("[Runner] Persisting custom sharding configuration.")
+            }
+        }
+
+        if setNum > 1 {
+            r.CleanupAfterSet(!r.isResharded)
+            r.client.ResetClient()
+        }
+
         fmt.Printf("\n=========================================\n")
         fmt.Printf("[Runner] Running Set %d — live nodes %v\n", tc.SetNumber, tc.LiveNodes)
         fmt.Printf("Live Nodes: %v\n", tc.LiveNodes)
@@ -136,17 +169,16 @@ func (r *Runner) RunAllTestSets() {
         fmt.Println("1. Run Test File (CSV)")
         fmt.Println("2. Run Benchmark Generation")
         fmt.Println("3. Skip this Test Case")
-        fmt.Print("Enter choice (1-3): ")
+        fmt.Print("\nEnter choice (1-3): ")
 
         choice, _ := reader.ReadString('\n')
         choice = strings.TrimSpace(choice)
 
         switch choice {
             case "1":
-                r.UpdateActiveNodes(tc.LiveNodes)
+                r.UpdateActiveNodes(tc.LiveNodes,r.AreAllTransactionsIntraShard(tc))
             case "2":
-                // Generate benchmark workload
-                transactions := r.GenerateBenchmarkWorkload(reader)
+                transactions,intraShardPerCt := r.GenerateBenchmarkWorkload(reader)
                 if transactions == nil {
                     fmt.Println("Failed to generate benchmark, skipping test set.")
                     continue
@@ -160,7 +192,7 @@ func (r *Runner) RunAllTestSets() {
                 }
                 tc.LiveNodes = allLiveNodes
 
-                r.UpdateActiveNodes(tc.LiveNodes)
+                r.UpdateActiveNodes(tc.LiveNodes,intraShardPerCt == "1")
             case "3":
                 log.Printf("[Runner] Skipping Test Set %d", tc.SetNumber)
                 continue
@@ -283,7 +315,7 @@ func (r *Runner) splitTransactionsIntoBatches(transactions []TestTransaction) []
     return batches
 }
 
-func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
+func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) ([]Transaction,string) {
     fmt.Println("\n╔════════════════════════════════════════╗")
     fmt.Println("║     BENCHMARK CONFIGURATION            ║")
     fmt.Println("╚════════════════════════════════════════╝")
@@ -350,18 +382,18 @@ func (r *Runner) GenerateBenchmarkWorkload(reader *bufio.Reader) []Transaction {
         HotDataPct:      hotPct, // Pass the new value here
     }
 
-    fmt.Printf("\n✓ Generating %d transactions...\n", numTxns)
+    fmt.Printf("\nGenerating %d transactions...\n", numTxns)
     bench := NewBenchmark(benchConfig)
     txns := bench.GenerateWorkload()
 
-    fmt.Printf("✓ Workload: %.0f%% reads, %.0f%% intra-shard\n", readPct*100, intraPct*100)
+    fmt.Printf("Workload: %.0f%% reads, %.0f%% intra-shard\n", readPct*100, intraPct*100)
     if skew > 0 {
-        fmt.Printf("✓ Skew: %.0f%% of traffic targets %.0f%% of accounts (Hot/Cold)\n", skew*100, hotPct*100)
+        fmt.Printf("Skew: %.0f%% of traffic targets %.0f%% of accounts (Hot/Cold)\n", skew*100, hotPct*100)
     } else {
-        fmt.Println("✓ Skew: Uniform distribution")
+        fmt.Println("Skew: Uniform distribution")
     }
 
-    return txns
+    return txns,intraPctStr
 }
 
 func (r *Runner) convertToTestTransactions(txns []Transaction) []TestTransaction {
@@ -399,7 +431,7 @@ func (r *Runner) showInteractiveMenu(transactionCount int,involvedKeys []string)
         fmt.Println("9. View client side replies")
         fmt.Println("10. Proceed to next batch")
         // fmt.Println("12. Apply Reshard")
-        fmt.Print("Enter choice (1-9): ")
+        fmt.Print("\nEnter choice (1-10): ")
 
         input, _ := reader.ReadString('\n')
         input = strings.TrimSpace(input)
@@ -466,12 +498,20 @@ func (r *Runner) RecoverNodeCommand(targetNodeId int32){
 }
 
 
-func (r *Runner) UpdateActiveNodes(liveNodes []int) {
+func (r *Runner) UpdateActiveNodes(liveNodes []int,isIntraShard bool) {
     for _, cfg := range r.nodeConfigs {
         client, exists := r.nodeClients[int32(cfg.NodeId)]
         if !exists {
             log.Printf("[Runner] No connection to node %d", cfg.NodeId)
             continue
+        }
+
+        if slices.Contains(liveNodes, int(cfg.NodeId)) {
+            _, err := client.RecoverNode(context.Background(),  &emptypb.Empty{})
+
+            if err != nil {
+                log.Printf("[Runner] Failed to send RECOVER signal for node %d: %v", cfg.NodeId, err)
+            }
         }
 
         if !slices.Contains(liveNodes, int(cfg.NodeId)) {
@@ -480,6 +520,23 @@ func (r *Runner) UpdateActiveNodes(liveNodes []int) {
             if err != nil {
                 log.Printf("[Runner] Failed to send FAIL signal for node %d: %v", cfg.NodeId, err)
             }
+        }
+    }
+
+    for _, cfg := range r.nodeConfigs {
+        client, exists := r.nodeClients[int32(cfg.NodeId)]
+        if !exists {
+            log.Printf("[Runner] No connection to node %d", cfg.NodeId)
+            continue
+        }
+
+       
+        _, err := client.EnableCheckpointing(context.Background(),  &pb.CheckpointReq{
+            Enable: true,
+        })
+
+        if err != nil {
+            log.Printf("[Runner] Failed to send CKPT signa for node %d: %v", cfg.NodeId, err)
         }
     }
 }
@@ -619,6 +676,8 @@ func (r *Runner) applyResharding(moves []ReshardMove,newMapping map[string]int32
     fmt.Println("[Resharding] Updating Client Routing Table...")
     r.client.UpdateShardMap(newMapping)
 
+    r.isResharded = true
+
     fmt.Println("[Resharding] Broadcasting New Map to All Nodes...")
     if err := r.broadcastShardMap(newMapping); err != nil {
         log.Printf("[Resharding] Warning: Failed to broadcast map to some nodes: %v", err)
@@ -701,32 +760,28 @@ func (r *Runner) moveAccount(move ReshardMove) error {
 
 func (r *Runner) getBalanceFromCluster(accountID string, clusterID int32) (int32, error) {
     r.client.muCluster.RLock()
-    nodeIDs := r.client.clusterInfo[clusterID].NodeIds
+    targetLeaderId := r.client.clusterInfo[clusterID].LeaderId
     r.client.muCluster.RUnlock()
-    
-    if len(nodeIDs) == 0 {
-        return 0, fmt.Errorf("no nodes found in cluster %d", clusterID)
+        
+
+    client, exists := r.nodeClients[targetLeaderId]
+    if !exists {
+        return -1,fmt.Errorf("[Runner] Error getting balance from leader = %d",targetLeaderId) 
     }
     
-    for _, nodeID := range nodeIDs {
-        client, exists := r.nodeClients[nodeID]
-        if !exists {
-            continue
-        }
-        
-        resp, err := client.GetBalance(context.Background(), &pb.GetBalanceRequest{
-            AccountId: accountID,
-        })
-        
-        if err != nil {
-            log.Printf("[ApplyReshard] Failed to get balance from node %d: %v", nodeID, err)
-            continue
-        }
-        
-        if resp.Success {
-            return resp.Balance, nil
-        }
+    resp, err := client.GetBalance(context.Background(), &pb.GetBalanceRequest{
+        AccountId: accountID,
+    })
+    
+    if err != nil {
+        log.Printf("[ApplyReshard] Failed to get balance from node %d: %v", targetLeaderId, err)
+        return -1,fmt.Errorf("[Runner] Error getting balance from leader = %d",targetLeaderId) 
     }
+    
+    if resp.Success {
+        return resp.Balance, nil
+    }
+
     
     return 0, fmt.Errorf("failed to read balance from any node in cluster %d", clusterID)
 }
@@ -978,4 +1033,32 @@ func (r *Runner) PrintDB(involvedKeys []string) {
             }
         }(nodeConfig.NodeId)
     }
+}
+
+
+func (r *Runner) AreAllTransactionsIntraShard(tc TestCase) bool {
+    for _, tx := range tc.Transactions {
+        if tx.IsFailNode || tx.IsRecoverNode || tx.Sender == "" || tx.Receiver == "" {
+            continue
+        }
+
+        senderCluster := r.client.getClusterForAccount(tx.Sender)
+        
+        receiverCluster := r.client.getClusterForAccount(tx.Receiver)
+
+        if senderCluster != receiverCluster {
+            return false
+        }
+    }
+    return true
+}
+
+func (r *Runner) CleanupAfterSet(ShouldResetSharding bool) {
+    for _,nodeConfig := range r.nodeConfigs {
+        _, _ = r.nodeClients[nodeConfig.NodeId].ResetNode(context.Background(), &pb.ResetNodeMesage{
+            ShouldResetSharding: ShouldResetSharding,
+        })
+    }
+
+    log.Printf("[Runner] Cleanup complete for Set")
 }

@@ -268,8 +268,9 @@ func (client *Client) updateLeaderFromReply(response *pb.ReplyMessage) {
     defer client.muCluster.Unlock()
 
 	leaderIdFromResp := response.Ballot.NodeId
+	clientIdStr := strconv.Itoa(int(response.ClientId))
 
-	clusterId := getClusterId(response.ClientId)
+	clusterId := client.getClusterForAccount(clientIdStr)
 	// log.Printf("[Client] Checking leader update for cluster=%d for clientId=%d",clusterId,response.ClientId)
 	existingLeaderId := client.clusterInfo[clusterId].LeaderId
 	
@@ -570,4 +571,31 @@ func (client *Client) CalculatePerformance(txCount int) {
     fmt.Printf("THROUGHPUT:          %.2f Req/Sec\n", throughput)
     fmt.Printf("AVG LATENCY:         %v\n", avgLatency)
     fmt.Println("=============================================")
+}
+
+func (client *Client) ResetClient(){
+	client.muPending.Lock()
+    client.pendingReqs = make(map[string]*PendingRequest)
+    client.muPending.Unlock()
+
+	client.muPerf.Lock()
+    client.performanceMeasureMap = make(map[string]*TransactionRecord)
+    client.muPerf.Unlock()
+
+	client.replyTracker = NewReplyTracker()
+
+	client.muCluster.Lock()
+    client.clusterInfo = make(map[int32]*ClusterInfo)
+    client.muCluster.Unlock()
+    client.buildClientClusterMap()
+
+	client.muStop.Lock()
+    if client.stopped {
+        client.stopChan = make(chan struct{})
+        client.stopped = false
+        log.Println("[Client] Client re-enabled (Stop signal cleared)")
+    }
+    client.muStop.Unlock()
+
+	log.Println("[Client] Reset complete.")
 }

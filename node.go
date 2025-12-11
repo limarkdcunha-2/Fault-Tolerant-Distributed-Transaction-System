@@ -198,6 +198,11 @@ type Node struct {
 
 	peers map[int32]pb.MessageServiceClient
 	clientSideGrpcClient pb.ClientServiceClient
+
+	muForce sync.RWMutex
+	forceStopCommitAndAbort bool
+
+	newViewTracker *NewViewTracker
 }	
 
 
@@ -245,6 +250,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 		twoPcAbortQueue:make([]*pb.TwoPCAbortMessage, 0),
 		twoPcPrepareQueue: make([]*pb.TwoPCPrepareMessage, 0),
 		shardMap: make(map[string]int32),
+		forceStopCommitAndAbort: false,
 		// locks: make(map[string]string),
 	}
 
@@ -284,6 +290,7 @@ func NewNode(nodeId, portNo int32) (*Node, error) {
 	lenNodes := len(newNode.getAllClusterNodes())
 	newNode.N = int32(lenNodes)
 	newNode.f = (newNode.N  - 1) / 2
+	newNode.newViewTracker = NewNewViewTracker()
 
 	// TO DO make this shard size (3000) dynamic
 	if err := newNode.loadState(newNode.clusterId,int32(3000)); err != nil {

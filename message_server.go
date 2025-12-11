@@ -2775,6 +2775,8 @@ func (node *Node) performNeededAbortsAndRepairLocks(pendingAbortActions []AbortA
 }
 
 func(node *Node) broadcastNewView(msg *pb.NewViewMessage){
+	node.newViewTracker.Add(msg)
+
 	allNodes := node.getAllClusterNodes()
 
 	log.Printf("[Node %d] Broadcasting NEW-VIEW Round=%d", 
@@ -3046,6 +3048,7 @@ func(node *Node) HandleNewView(ctx context.Context,msg *pb.NewViewMessage) (*emp
         return &emptypb.Empty{}, nil
     }
 
+	node.newViewTracker.Add(msg)
 	log.Printf("[Node %d] Received NEW-VIEW from node=%d for Round=%d",node.nodeId,msg.NodeId,msg.Ballot.RoundNumber)
 	
 	// 1. Check for ballot
@@ -4297,4 +4300,54 @@ func (node *Node) DeleteDatapoint(ctx context.Context, req *pb.DeleteDatapointRe
     
     log.Printf("[Node %d] Deleted account %s from database", node.nodeId, req.AccountId)
     return &emptypb.Empty{}, nil
+}
+
+func (node *Node) ResetTimer(ctx context.Context, req *emptypb.Empty) (*emptypb.Empty, error) {
+	if node.livenessTimer.IsRunning(){
+		node.livenessTimer.Stop()
+	}
+
+	log.Printf("[Node %d] TIMER STOP complete", node.nodeId)
+
+	node.muForce.Lock()
+	node.forceStopCommitAndAbort = true
+	node.muForce.Unlock()
+
+    return &emptypb.Empty{}, nil
+}
+
+func (node *Node) GetViewHistory(ctx context.Context, req *emptypb.Empty) (*pb.ViewHistoryResponse, error) {
+    allNewViews := node.newViewTracker.GetAll()
+    
+    return &pb.ViewHistoryResponse{
+        NewViews:        allNewViews,
+    }, nil
+}
+
+
+func (node *Node) PrintDB(ctx context.Context, req *pb.PrintDBRequest) (*emptypb.Empty, error) {
+	node.muState.RLock() 
+    defer node.muState.RUnlock()
+
+	fmt.Printf("\n" + "--------------------------------------------------\n")
+    fmt.Printf("[Node %d] CURRENT DATABASE STATE\n", node.nodeId)
+    fmt.Printf("--------------------------------------------------\n")
+
+    if len(req.InvolvedKeys) == 0 {
+        fmt.Println(" (No specific keys requested)")
+	} else {
+		for _, accountId := range req.InvolvedKeys {
+            balance,err := node.getBalance(accountId)
+            
+            if err == pebble.ErrNotFound {
+                log.Printf("  %-10s : [NOT FOUND]\n", accountId)
+            } else if err != nil {
+                log.Printf("  %-10s : [ERROR: %v]\n", accountId, err)
+            } else {
+                fmt.Printf("%s: %d\n", accountId, balance)
+            }
+        }
+	}
+
+	return &emptypb.Empty{}, nil
 }

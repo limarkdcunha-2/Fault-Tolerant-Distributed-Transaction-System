@@ -172,6 +172,14 @@ message GetBalanceResponse {
     string error = 3;
 }
 
+message ViewHistoryResponse {
+  repeated NewViewMessage new_views = 1;
+}
+
+message PrintDBRequest {
+  repeated string involved_keys = 1; 
+}
+
 service MessageService {
   rpc SendRequestMessage (ClientRequest) returns (google.protobuf.Empty);
   rpc HandleAccept(AcceptMessage) returns (google.protobuf.Empty);
@@ -202,6 +210,10 @@ service MessageService {
   rpc MoveDatapoint(MoveDatapointRequest) returns (google.protobuf.Empty);
   rpc DeleteDatapoint(DeleteDatapointRequest) returns (google.protobuf.Empty);
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+
+  rpc ResetTimer(google.protobuf.Empty) returns (google.protobuf.Empty);
+  rpc GetViewHistory(google.protobuf.Empty) returns (ViewHistoryResponse);
+  rpc PrintDB(PrintDBRequest) returns (google.protobuf.Empty);
 }
 
 service ClientService {

@@ -264,6 +264,14 @@ func(node *Node) findTargetClusterIds(datapoint string) []int32 {
 }
 
 func(node *Node) shouldKeepSendingAbort(req *pb.ClientRequest) bool {
+    node.muForce.RLock()
+    forceStopCommitAndAbort := node.forceStopCommitAndAbort
+    node.muForce.RUnlock()
+
+    if forceStopCommitAndAbort{
+        return forceStopCommitAndAbort
+    }
+    
     node.muCrossSharTxs.RLock()
     defer node.muCrossSharTxs.RUnlock()  
 
@@ -279,6 +287,14 @@ func(node *Node) shouldKeepSendingAbort(req *pb.ClientRequest) bool {
 }
 
 func(node *Node) shouldKeepSendingCommmit(req *pb.ClientRequest) bool {
+    node.muForce.RLock()
+    forceStopCommitAndAbort := node.forceStopCommitAndAbort
+    node.muForce.RUnlock()
+
+    if forceStopCommitAndAbort{
+        return forceStopCommitAndAbort
+    }
+
     node.muCrossSharTxs.RLock()
     defer node.muCrossSharTxs.RUnlock()  
 

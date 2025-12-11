@@ -122,45 +122,56 @@ func (r *Runner) RunAllTestSets() {
     reader := bufio.NewReader(os.Stdin)
     
 	for setNum := 1; setNum <= len(r.testCases); setNum++ {
-        if setNum != 9 {
-            continue
-        }
+        // if setNum != 9 {
+        //     continue
+        // }
 
         tc := r.testCases[setNum]
         fmt.Printf("\n=========================================\n")
         fmt.Printf("[Runner] Running Set %d — live nodes %v\n", tc.SetNumber, tc.LiveNodes)
+        fmt.Printf("Live Nodes: %v\n", tc.LiveNodes)
         fmt.Printf("=========================================\n")
 
-        fmt.Print("\nUse benchmark workload instead of test file (CSV)? (y/n): ")
+        fmt.Println("Select execution mode:")
+        fmt.Println("1. Run Test File (CSV)")
+        fmt.Println("2. Run Benchmark Generation")
+        fmt.Println("3. Skip this Test Case")
+        fmt.Print("Enter choice (1-3): ")
+
         choice, _ := reader.ReadString('\n')
-        choice = strings.TrimSpace(strings.ToLower(choice))
+        choice = strings.TrimSpace(choice)
 
-        var transactions []Transaction
+        switch choice {
+            case "1":
+                r.UpdateActiveNodes(tc.LiveNodes)
+            case "2":
+                // Generate benchmark workload
+                transactions := r.GenerateBenchmarkWorkload(reader)
+                if transactions == nil {
+                    fmt.Println("Failed to generate benchmark, skipping test set.")
+                    continue
+                }
 
-        if choice == "y" || choice == "yes" {
-            // Generate benchmark workload
-            transactions = r.GenerateBenchmarkWorkload(reader)
-            if transactions == nil {
-                fmt.Println("Failed to generate benchmark, skipping test set.")
+                tc.Transactions = r.convertToTestTransactions(transactions)
+
+                allLiveNodes := make([]int, 0, len(r.nodeConfigs))
+                for _, cfg := range r.nodeConfigs {
+                    allLiveNodes = append(allLiveNodes, int(cfg.NodeId))
+                }
+                tc.LiveNodes = allLiveNodes
+
+                r.UpdateActiveNodes(tc.LiveNodes)
+            case "3":
+                log.Printf("[Runner] Skipping Test Set %d", tc.SetNumber)
                 continue
-            }
-
-            tc.Transactions = r.convertToTestTransactions(transactions)
-
-            allLiveNodes := make([]int, 0, len(r.nodeConfigs))
-            for _, cfg := range r.nodeConfigs {
-                allLiveNodes = append(allLiveNodes, int(cfg.NodeId))
-            }
-            tc.LiveNodes = allLiveNodes
-
-            r.UpdateActiveNodes(tc.LiveNodes)
-        } else {
-            r.UpdateActiveNodes(tc.LiveNodes)
+            default:
+                fmt.Println("Invalid choice. Skipping this set.")
+                continue
         }
 
-        countFired := r.ExecuteTestCase(tc)
+        countFired,involvedKeys := r.ExecuteTestCase(tc)
             
-        r.showInteractiveMenu(countFired)
+        r.showInteractiveMenu(countFired,involvedKeys)
     }
 
     log.Printf("All test sets complete")
@@ -172,10 +183,12 @@ func (r *Runner) RunAllTestSets() {
     log.Println("[Runner] All sets complete.")
 }
 
-func (r *Runner) ExecuteTestCase(tc TestCase) (int) {
+func (r *Runner) ExecuteTestCase(tc TestCase) (int,[]string) {
 	log.Printf("[Runner] Executing transactions for Set %d...", tc.SetNumber)
     count :=0
 	batches := r.splitTransactionsIntoBatches(tc.Transactions)
+
+    uniqueKeys := make(map[string]bool)
 
    for _, batch := range batches {
         if batch.isControl {
@@ -195,6 +208,13 @@ func (r *Runner) ExecuteTestCase(tc TestCase) (int) {
 
             for i, tx := range batch.transactions {
                 count++
+                if tx.Sender != "" {
+                    uniqueKeys[tx.Sender] = true
+                }
+                if tx.Receiver != "" {
+                    uniqueKeys[tx.Receiver] = true
+                }
+
                 wg.Add(1)
 
 				// Launch a goroutine for EVERY transaction
@@ -216,7 +236,16 @@ func (r *Runner) ExecuteTestCase(tc TestCase) (int) {
     }
 
     log.Printf("[Runner] Finished all transactions for Set %d.", tc.SetNumber)
-    return count
+    // 3. Convert map to slice
+    involvedKeys := make([]string, 0, len(uniqueKeys))
+    for k := range uniqueKeys {
+        involvedKeys = append(involvedKeys, k)
+    }
+    
+    // Optional: Sort for consistent display
+    sort.Strings(involvedKeys)
+
+    return count,involvedKeys
 }
 
 func (r *Runner) splitTransactionsIntoBatches(transactions []TestTransaction) []TransactionBatch {
@@ -352,69 +381,55 @@ func (r *Runner) convertToTestTransactions(txns []Transaction) []TestTransaction
     return testTxns
 }
 
-func (r *Runner) showInteractiveMenu(transactionCount int) {
+func (r *Runner) showInteractiveMenu(transactionCount int,involvedKeys []string) {
     reader := bufio.NewReader(os.Stdin)
     
     for {
         fmt.Println("\n========================================")
         fmt.Println("         INTERACTIVE MENU")
         fmt.Println("========================================")
-        // fmt.Println("1. PrintLog")
+        fmt.Println("1. PrintDB")
         fmt.Println("2. PrintBalance ")
-        // fmt.Println("3. PrintStatus (single sequence number)")
-        fmt.Println("4. PrintStatus (all sequence numbers)")
-        // fmt.Println("5. PrintView")
-        fmt.Println("6. Stop client retries")
-        // fmt.Println("7. Stop server timers")
-        fmt.Println("8. View client side replies")
-        fmt.Println("9. Proceed to next batch")
-        fmt.Println("10. Performance")
-        fmt.Println("11. PrintReshard")
+        fmt.Println("3. PrintStatus (all sequence numbers)")
+        fmt.Println("4. PrintView")
+        fmt.Println("5. Performance")
+        fmt.Println("6. PrintReshard")
+        fmt.Println("7. Stop client retries")
+        fmt.Println("8. Stop server timers")
+        fmt.Println("9. View client side replies")
+        fmt.Println("10. Proceed to next batch")
         // fmt.Println("12. Apply Reshard")
-        fmt.Println("========================================")
         fmt.Print("Enter choice (1-9): ")
 
         input, _ := reader.ReadString('\n')
         input = strings.TrimSpace(input)
 
         switch input {
-        // case "1":
-        //     r.PrintLogsForAllNodes()
+        case "1":
+            r.PrintDB(involvedKeys)
         case "2":
                 fmt.Print("Enter datapoint number: ")
             seqInput, _ := reader.ReadString('\n')
             seqInput = strings.TrimSpace(seqInput)
 
             r.PrintBalanceAll(seqInput)
-        // case "3":
-        //     fmt.Print("Enter sequence number: ")
-        //     seqInput, _ := reader.ReadString('\n')
-        //     seqInput = strings.TrimSpace(seqInput)
-        //     seqNum, err := strconv.Atoi(seqInput)
-        //     if err != nil {
-        //         fmt.Printf("Invalid sequence number %d",seqNum)
-        //         continue
-        //     }
-        //     r.PrintStatusForSequence(int32(seqNum))
-        case "4":
+        case "3":
             r.PrintStatusAll()
-        // case "5":
-        //     r.PrintViewForAllNodes()
+        case "4":
+            r.PrintViewForAllNodes()
+        case "5":
+            r.client.CalculatePerformance(transactionCount)
         case "6":
+            r.PrintReshard()
+        case "7":
             r.StopClient()
-        // case "7":
-        //     r.StopAllNodeTimers()
         case "8":
-            r.client.PrintReplyHistory()
+            r.StopAllNodeTimers()
         case "9":
+            r.client.PrintReplyHistory()
+        case "10":
             fmt.Println("\nProceeding to next batch...")
             return
-        case "10":
-            r.client.CalculatePerformance(transactionCount)
-        case "11":
-            r.PrintReshard()
-        case "12":
-            // r.ApplyReshard()
         default:
             fmt.Println("Invalid choice. Please enter 1-15.")
         }
@@ -817,4 +832,150 @@ func (r *Runner) deleteFromCluster(accountID string, clusterID int32) error {
     }
     
     return nil
+}
+
+func (r *Runner) StopAllNodeTimers(){
+    for _, nodeCfg := range r.nodeConfigs {
+		_,err:= r.nodeClients[nodeCfg.NodeId].ResetTimer(context.Background(), &emptypb.Empty{})
+
+        if err != nil {
+            log.Printf("ERROR while trying to reset timers %v",err)
+        }
+    }
+}
+
+func (r *Runner) aggregateUniqueNewViews() ([]*pb.NewViewMessage, map[string][]int32) {
+    uniqueNewViews := make(map[string]*pb.NewViewMessage)
+    
+    viewWitnesses := make(map[string][]int32)
+    
+    for _, nodeConfig := range r.nodeConfigs {
+        resp, err := r.nodeClients[nodeConfig.NodeId].GetViewHistory(context.Background(), &emptypb.Empty{})
+        if err != nil {
+            log.Printf("[Runner] Failed to get view history for node %d: %v", nodeConfig.NodeId, err)
+            continue
+        }
+        
+        for _, nv := range resp.NewViews {
+            key := fmt.Sprintf("%d-%d", nv.Ballot.RoundNumber, nv.Ballot.NodeId)
+            
+            if _, exists := uniqueNewViews[key]; !exists {
+                uniqueNewViews[key] = nv
+            }
+            
+            if !contains(viewWitnesses[key], nodeConfig.NodeId) {
+                viewWitnesses[key] = append(viewWitnesses[key], nodeConfig.NodeId)
+            }
+        }
+    }
+    
+    result := make([]*pb.NewViewMessage, 0, len(uniqueNewViews))
+    for _, nv := range uniqueNewViews {
+        result = append(result, nv)
+    }
+    
+    sort.Slice(result, func(i, j int) bool {
+        if result[i].Ballot.RoundNumber != result[j].Ballot.RoundNumber {
+            return result[i].Ballot.RoundNumber < result[j].Ballot.RoundNumber
+        }
+        return result[i].Ballot.NodeId < result[j].Ballot.NodeId
+    })
+    
+    return result, viewWitnesses
+}
+
+// Helper to check if slice contains item
+func contains(slice []int32, item int32) bool {
+    for _, v := range slice {
+        if v == item {
+            return true
+        }
+    }
+    return false
+}
+
+func (r *Runner) PrintViewForAllNodes() {
+    fmt.Println("\n" + strings.Repeat("=", 80))
+    fmt.Println("PAXOS NEW-VIEW HISTORY - AGGREGATED FROM ALL NODES")
+    fmt.Println(strings.Repeat("=", 80) + "\n")
+    
+    uniqueNewViews, viewWitnesses := r.aggregateUniqueNewViews()
+    
+    if len(uniqueNewViews) == 0 {
+        fmt.Println("No NewView messages broadcasted during this test case.")
+        fmt.Println(strings.Repeat("=", 80) + "\n")
+        return
+    }
+    
+    fmt.Printf("Total Unique NewViews: %d\n\n", len(uniqueNewViews))
+    
+    for idx, nv := range uniqueNewViews {
+        key := fmt.Sprintf("%d-%d", nv.Ballot.RoundNumber, nv.Ballot.NodeId)
+        witnesses := viewWitnesses[key]
+        
+        fmt.Printf("NEW-VIEW MESSAGE #%d\n", idx+1)
+        fmt.Println(strings.Repeat("-", 80))
+        
+        fmt.Printf("  Ballot Round:    %d\n", nv.Ballot.RoundNumber)
+        fmt.Printf("  Ballot Leader:   Node %d\n", nv.Ballot.NodeId)
+        fmt.Printf("  Sender (NodeId): Node %d\n", nv.NodeId)
+        fmt.Printf("  Witnessed by:    %d/%d nodes %v\n", 
+            len(witnesses), len(r.nodeConfigs), witnesses)
+
+        fmt.Println()
+
+        fmt.Printf("AcceptLog Entries: %d\n", len(nv.AcceptLog))
+        fmt.Println("  " + strings.Repeat("-", 76))
+        
+        if len(nv.AcceptLog) > 0 {
+            for logIdx, entry := range nv.AcceptLog {
+                fmt.Printf("    [%d] Seq=%d\n", logIdx+1, entry.SequenceNum)
+            }
+        } else {
+            fmt.Println("(AcceptLog is empty)")
+        }
+        
+        fmt.Println()
+        fmt.Println(strings.Repeat("=", 80))
+        fmt.Println()
+    }
+    
+    fmt.Println("SUMMARY:")
+    fmt.Println(strings.Repeat("-", 80))
+    fmt.Printf("%-10s | %-10s | %-15s | %-30s\n", "Round", "Leader", "Accept Log Size", "Witnesses")
+    fmt.Println(strings.Repeat("-", 80))
+    
+    for _, nv := range uniqueNewViews {
+        key := fmt.Sprintf("%d-%d", nv.Ballot.RoundNumber, nv.Ballot.NodeId)
+        witnesses := viewWitnesses[key]
+        witnessCount := fmt.Sprintf("%d/%d nodes", len(witnesses), len(r.nodeConfigs))
+        
+        fmt.Printf("%-10d | Node %-5d | %-15d | %-30s\n", 
+            nv.Ballot.RoundNumber, 
+            nv.Ballot.NodeId, 
+            len(nv.AcceptLog), 
+            witnessCount)
+    }
+    fmt.Println(strings.Repeat("=", 80) + "\n")
+}
+
+
+func (r *Runner) PrintDB(involvedKeys []string) {
+    fmt.Printf("[Runner] Requesting all nodes to print balances for keys: %v\n", involvedKeys)
+
+    req := &pb.PrintDBRequest{
+        InvolvedKeys: involvedKeys,
+    }
+
+    for _, nodeConfig := range r.nodeConfigs {
+        go func(id int32) {
+            ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+            defer cancel()
+
+            _, err := r.nodeClients[id].PrintDB(ctx, req)
+            if err != nil {
+                log.Printf("[Runner] Failed to trigger PrintBalance on Node %d: %v", id, err)
+            }
+        }(nodeConfig.NodeId)
+    }
 }

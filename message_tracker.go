@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	pb "transaction-processor/message"
 )
 
 // For client side
@@ -76,4 +77,47 @@ func (rt *ReplyTracker) GetCount() int {
     rt.mu.RLock()
     defer rt.mu.RUnlock()
     return len(rt.replies)
+}
+
+
+type NewViewTracker struct {
+    mu      sync.RWMutex
+    history []*pb.NewViewMessage
+}
+
+func NewNewViewTracker() *NewViewTracker {
+    return &NewViewTracker{
+        history: make([]*pb.NewViewMessage, 0),
+    }
+}
+
+func (nvt *NewViewTracker) Add(msg *pb.NewViewMessage) {
+    nvt.mu.Lock()
+    defer nvt.mu.Unlock()
+    
+    // Check for duplicates
+    // for _, existing := range nvt.history {
+    //     if existing.View == msg.View {
+    //         return // Already have this NEW-VIEW
+    //     }
+    // }
+    
+    nvt.history = append(nvt.history, msg)
+}
+
+func (nvt *NewViewTracker) Clear() {
+    nvt.mu.Lock()
+    defer nvt.mu.Unlock()
+    
+    nvt.history = make([]*pb.NewViewMessage, 0)
+}
+
+func (nvt *NewViewTracker) GetAll() []*pb.NewViewMessage {
+    nvt.mu.RLock()
+    defer nvt.mu.RUnlock()
+    
+    // Return a copy to prevent external modification
+    result := make([]*pb.NewViewMessage, len(nvt.history))
+    copy(result, nvt.history)
+    return result
 }

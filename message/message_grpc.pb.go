@@ -52,6 +52,9 @@ const (
 	MessageService_MoveDatapoint_FullMethodName                 = "/message.MessageService/MoveDatapoint"
 	MessageService_DeleteDatapoint_FullMethodName               = "/message.MessageService/DeleteDatapoint"
 	MessageService_GetBalance_FullMethodName                    = "/message.MessageService/GetBalance"
+	MessageService_ResetTimer_FullMethodName                    = "/message.MessageService/ResetTimer"
+	MessageService_GetViewHistory_FullMethodName                = "/message.MessageService/GetViewHistory"
+	MessageService_PrintDB_FullMethodName                       = "/message.MessageService/PrintDB"
 )
 
 // MessageServiceClient is the client API for MessageService service.
@@ -83,6 +86,9 @@ type MessageServiceClient interface {
 	MoveDatapoint(ctx context.Context, in *MoveDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	DeleteDatapoint(ctx context.Context, in *DeleteDatapointRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*GetBalanceResponse, error)
+	ResetTimer(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	GetViewHistory(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ViewHistoryResponse, error)
+	PrintDB(ctx context.Context, in *PrintDBRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type messageServiceClient struct {
@@ -333,6 +339,36 @@ func (c *messageServiceClient) GetBalance(ctx context.Context, in *GetBalanceReq
 	return out, nil
 }
 
+func (c *messageServiceClient) ResetTimer(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_ResetTimer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) GetViewHistory(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ViewHistoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ViewHistoryResponse)
+	err := c.cc.Invoke(ctx, MessageService_GetViewHistory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *messageServiceClient) PrintDB(ctx context.Context, in *PrintDBRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, MessageService_PrintDB_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MessageServiceServer is the server API for MessageService service.
 // All implementations must embed UnimplementedMessageServiceServer
 // for forward compatibility.
@@ -362,6 +398,9 @@ type MessageServiceServer interface {
 	MoveDatapoint(context.Context, *MoveDatapointRequest) (*emptypb.Empty, error)
 	DeleteDatapoint(context.Context, *DeleteDatapointRequest) (*emptypb.Empty, error)
 	GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error)
+	ResetTimer(context.Context, *emptypb.Empty) (*emptypb.Empty, error)
+	GetViewHistory(context.Context, *emptypb.Empty) (*ViewHistoryResponse, error)
+	PrintDB(context.Context, *PrintDBRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedMessageServiceServer()
 }
 
@@ -443,6 +482,15 @@ func (UnimplementedMessageServiceServer) DeleteDatapoint(context.Context, *Delet
 }
 func (UnimplementedMessageServiceServer) GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetBalance not implemented")
+}
+func (UnimplementedMessageServiceServer) ResetTimer(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ResetTimer not implemented")
+}
+func (UnimplementedMessageServiceServer) GetViewHistory(context.Context, *emptypb.Empty) (*ViewHistoryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetViewHistory not implemented")
+}
+func (UnimplementedMessageServiceServer) PrintDB(context.Context, *PrintDBRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PrintDB not implemented")
 }
 func (UnimplementedMessageServiceServer) mustEmbedUnimplementedMessageServiceServer() {}
 func (UnimplementedMessageServiceServer) testEmbeddedByValue()                        {}
@@ -897,6 +945,60 @@ func _MessageService_GetBalance_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MessageService_ResetTimer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).ResetTimer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_ResetTimer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).ResetTimer(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_GetViewHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).GetViewHistory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_GetViewHistory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).GetViewHistory(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MessageService_PrintDB_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrintDBRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MessageServiceServer).PrintDB(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MessageService_PrintDB_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MessageServiceServer).PrintDB(ctx, req.(*PrintDBRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MessageService_ServiceDesc is the grpc.ServiceDesc for MessageService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -999,6 +1101,18 @@ var MessageService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBalance",
 			Handler:    _MessageService_GetBalance_Handler,
+		},
+		{
+			MethodName: "ResetTimer",
+			Handler:    _MessageService_ResetTimer_Handler,
+		},
+		{
+			MethodName: "GetViewHistory",
+			Handler:    _MessageService_GetViewHistory_Handler,
+		},
+		{
+			MethodName: "PrintDB",
+			Handler:    _MessageService_PrintDB_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

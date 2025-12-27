@@ -1,4 +1,4 @@
-# Spanner-Inspired Sharded Transaction Engine
+# Fault-Tolerant-Distributed-Transaction-System (Spanner-Inspired Sharded Transaction Engine)
 
 Copyright (c) 2025 [Limark Dcunha]  
 All rights reserved.
